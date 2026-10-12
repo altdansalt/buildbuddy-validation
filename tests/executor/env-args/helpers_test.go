@@ -3,6 +3,9 @@ package envargs_test
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,7 +20,27 @@ const instance = "env-args"
 
 func fixture(t *testing.T) *harness.Clients {
 	t.Helper()
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
+	var f *harness.Fixture
+	// Register before Start so this runs after the harness saves container logs.
+	t.Cleanup(func() {
+		if f == nil {
+			return
+		}
+		logs, err := filepath.Glob(filepath.Join(f.OutputDir, "*.logs.txt"))
+		require.NoError(t, err)
+		for _, path := range logs {
+			b, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NotContains(t, string(b), "panic:", "container log %s", path)
+			require.NotContains(t, string(b), "fatal error:", "container log %s", path)
+			for _, line := range strings.Split(string(b), "\n") {
+				if strings.Contains(line, "executable file not found") {
+					t.Logf("container log: %s", line)
+				}
+			}
+		}
+	})
+	f = harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
 	return f.Clients(harness.App)
 }
 func upload(t *testing.T, c *harness.Clients, d *repb.Directory) *repb.Digest {
