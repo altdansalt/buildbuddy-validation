@@ -187,3 +187,44 @@ func fixtureDockerHost(t *testing.T, container string) string {
 	t.Fatal("could not locate fixture Docker daemon")
 	return ""
 }
+
+// With local validation disabled, the remote backend is solely responsible for
+// rejecting a corrupt stream. The proxy must not acknowledge or cache it before
+// receiving the backend's validation result.
+func TestBackendValidationBeforeLocalCommit(t *testing.T) {
+	f := harness.Start(t, harness.Options{
+		Components: []harness.Component{harness.App, harness.CacheProxy},
+		Args:       map[harness.Component][]string{harness.CacheProxy: {"--cache_proxy.skip_write_validation=true"}},
+	})
+	proxy, app := f.Clients(harness.CacheProxy), f.Clients(harness.App)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	for _, compressed := range []bool{false, true} {
+		t.Run(fmt.Sprint(compressed), func(t *testing.T) {
+			data := []byte(fmt.Sprintf("backend validated stream compressed=%t", compressed))
+			d, err := proxy.Write(ctx, "remote-validation", data, compressed)
+			require.NoError(t, err)
+			for _, c := range []*harness.Clients{app, proxy} {
+				got, err := c.Read(ctx, "remote-validation", d)
+				require.NoError(t, err)
+				require.Equal(t, data, got)
+			}
+			// Preserve size while changing content, isolating checksum validation.
+			expected := harness.Digest(append([]byte("expected: "), data...))
+			corrupt := append([]byte("corrupt!: "), data...)
+			if compressed {
+				corrupt, err = harness.Compress(corrupt)
+				require.NoError(t, err)
+			}
+			stream, err := proxy.ByteStream.Write(ctx)
+			require.NoError(t, err)
+			require.NoError(t, stream.Send(&bspb.WriteRequest{ResourceName: harness.UploadResourceName("remote-validation", expected, compressed), Data: corrupt, FinishWrite: true}))
+			_, err = stream.CloseAndRecv()
+			require.Equal(t, codes.InvalidArgument, status.Code(err), "backend validation error must reach client")
+			for _, c := range []*harness.Clients{app, proxy} {
+				_, err := c.Read(ctx, "remote-validation", expected)
+				require.Equal(t, codes.NotFound, status.Code(err), "backend-rejected blob must not be cached locally")
+			}
+		})
+	}
+}

@@ -10,7 +10,10 @@ The tests start the digest-pinned v2.314.0 app and cache proxy through the harne
 They cover batch, identity ByteStream and zstd ByteStream uploads, zero-byte and
 multi-message payloads, immediate direct-backend visibility, proxy read-your-writes,
 concurrent duplicate writes across all three paths, mixed valid/invalid batch
-members, invalid streaming digests, and backend interruption followed by retry.
+members, invalid streaming digests, and backend interruption followed by retry. A second fixture enables
+`cache_proxy.skip_write_validation` and checks that backend checksum rejection
+is returned to the client without polluting the local cache, for identity and
+zstd streams.
 
 The release implements synchronous backend writes: CAS BatchUpdateBlobs returns
 its remote response, and ByteStream dualWrite closes the remote stream before
