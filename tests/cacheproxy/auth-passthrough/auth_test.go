@@ -18,7 +18,7 @@ import (
 // AC is group-scoped; CAS may intentionally deduplicate across groups. All
 // assertions include direct upstream controls rather than assuming CAS tenancy.
 func TestActionCacheNamespaces(t *testing.T) {
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}})
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}, Config: map[harness.Component]harness.Config{harness.App: {"auth": harness.Config{"enable_anonymous_usage": false}}}})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	ctx = metadata.AppendToOutgoingContext(ctx, "x-buildbuddy-platform.cache-proxy-action-cache-ttl", "1h")
@@ -88,7 +88,7 @@ func TestActionCacheNamespaces(t *testing.T) {
 }
 
 func TestCASInstanceAndCredentialPassthrough(t *testing.T) {
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}})
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}, Config: map[harness.Component]harness.Config{harness.App: {"auth": harness.Config{"enable_anonymous_usage": false}}}})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	proxy, app := f.Clients(harness.CacheProxy), f.Clients(harness.App)
