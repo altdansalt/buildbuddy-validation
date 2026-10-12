@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +16,24 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
+
+// Check the logs saved by the fixture after all subtests have finished. Close
+// is idempotent; its original cleanup still runs if this assertion fails.
+func start(t *testing.T, opts harness.Options) *harness.Fixture {
+	t.Helper()
+	f := harness.Start(t, opts)
+	containers := []string{f.Endpoint(harness.App).Container, f.Endpoint(harness.Executor).Container}
+	t.Cleanup(func() {
+		f.Close()
+		for _, name := range containers {
+			logs, err := os.ReadFile(filepath.Join(f.OutputDir, name+".logs.txt"))
+			require.NoError(t, err)
+			require.NotContains(t, string(logs), "panic:", "container %s panicked", name)
+			require.NotContains(t, string(logs), "fatal error:", "container %s hit a Go runtime error", name)
+		}
+	})
+	return f
+}
 
 // execute always bypasses the action cache and bounds both scheduling and execution.
 // REAPI ExecuteResponse.status represents service errors; a tool failure belongs
@@ -75,7 +96,7 @@ func execute(t *testing.T, c *harness.Clients, script string, estimates map[stri
 }
 
 func TestEstimatesAndBoundedChildren(t *testing.T) {
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
+	f := start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
 	c := f.Clients(harness.App)
 	// platform.go accepts cores/millicores, IEC sizes and numeric byte values.
 	// Invalid values fall back to defaults; nonpositive requests are replaced by
@@ -99,7 +120,7 @@ func TestEstimatesAndBoundedChildren(t *testing.T) {
 	t.Run("bounded-children", func(t *testing.T) {
 		r, out, _ := execute(t, c, `i=0; while [ "$i" -lt 32 ]; do (sleep 1; printf 'child\n') & i=$((i+1)); done; wait`, map[string]string{"EstimatedCPU": "250m", "EstimatedMemory": "64MB"})
 		require.Zero(t, r.ExitCode)
-		require.Equal(t, 32, countLines(out, "child\n"))
+		require.Equal(t, strings.Repeat("child\n", 32), out)
 	})
 	// Small estimates do not impose hard limits in the bare provider. Allocate
 	// only 8 MiB on disk, regardless of the scheduler's 1-byte disk request.
@@ -118,20 +139,8 @@ func TestEstimatesAndBoundedChildren(t *testing.T) {
 	}
 }
 
-func countLines(s, line string) int {
-	n := 0
-	for len(s) >= len(line) && s[:len(line)] == line {
-		n++
-		s = s[len(line):]
-	}
-	if s != "" {
-		return -1
-	}
-	return n
-}
-
 func TestMemoryExhaustionAndRecovery(t *testing.T) {
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
+	f := start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
 	c := f.Clients(harness.App)
 	// RLIMIT_AS affects only this action's shell and descendants. This is an
 	// allocator failure, not a cgroup OOM kill, and cannot exhaust the runner.
@@ -147,7 +156,7 @@ func TestMemoryExhaustionAndRecovery(t *testing.T) {
 func TestWorkspaceDiskFullAndRecovery(t *testing.T) {
 	// Only executor workspaces use the 16 MiB tmpfs. CAS/file cache and the app's
 	// storage remain on independent volumes, so ENOSPC cannot fill the runner.
-	f := harness.Start(t, harness.Options{
+	f := start(t, harness.Options{
 		Components: []harness.Component{harness.App, harness.Executor},
 		Config:     map[harness.Component]harness.Config{harness.Executor: {"executor": harness.Config{"root_directory": "/resource-workspace"}}},
 		DockerArgs: map[harness.Component][]string{harness.Executor: {"--tmpfs", "/resource-workspace:rw,size=16m,mode=1777"}},

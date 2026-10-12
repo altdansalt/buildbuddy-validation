@@ -13,6 +13,7 @@ so execution merging cannot substitute for concurrency coverage.
 
 Coverage:
 
+- App and executor container logs are checked for panics and fatal Go runtime errors.
 - CPU cores, millicores, scientific notation; IEC and numeric memory/disk sizes.
 - Tiny, zero, negative and malformed estimates execute without server errors.
 - Thirty-two child processes complete and are reaped; four distinct actions run
