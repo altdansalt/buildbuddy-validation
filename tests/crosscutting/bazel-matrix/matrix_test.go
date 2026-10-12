@@ -93,6 +93,26 @@ func download(t *testing.T, dir, version, hash string) string {
 
 func TestBazelMatrix(t *testing.T) {
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor, harness.CacheProxy}})
+	t.Cleanup(func() {
+		f.Close()
+		logs, err := filepath.Glob(filepath.Join(f.OutputDir, "*.logs.txt"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		for _, path := range logs {
+			b, err := os.ReadFile(path)
+			if err != nil {
+				t.Error(err)
+				continue
+			}
+			for _, marker := range []string{"panic:", "fatal error:"} {
+				if strings.Contains(string(b), marker) {
+					t.Errorf("container runtime failure in %s: %s", filepath.Base(path), marker)
+				}
+			}
+		}
+	})
 	versions := []struct{ version, hash string }{
 		{"7.6.1", "ac6249d1192aea9feaf49dfee2ab50c38cee2454b00cf29bbec985a11795c025"},
 		{"8.4.2", "4dc8e99dfa802e252dac176d08201fd15c542ae78c448c8a89974b6f387c282c"},
