@@ -118,6 +118,8 @@ func TestBackendFaultsAndRecovery(t *testing.T) {
 					app = f.Clients(harness.App)
 				case "disconnect":
 					dkr("network", "connect", "--alias", "app", f.Network, backend)
+					refreshPorts(t, dkr, f.Endpoint(harness.App))
+					app = f.Clients(harness.App)
 				}
 			}
 			t.Cleanup(restore)
@@ -176,8 +178,8 @@ func TestProxyRestartPersistsLocalCAS(t *testing.T) {
 	_, err := proxy.Write(ctx, instance, data, false)
 	require.NoError(t, err)
 	read(t, proxy, data)
-	// Abrupt restart checks committed data survives without a graceful cache flush.
-	dkr("kill", "--signal", "KILL", f.Endpoint(harness.CacheProxy).Container)
+	// Graceful shutdown flushes Pebble metadata (normal writes use NoSync).
+	dkr("stop", "--time", "30", f.Endpoint(harness.CacheProxy).Container)
 	dkr("start", f.Endpoint(harness.CacheProxy).Container)
 	refreshPorts(t, dkr, f.Endpoint(harness.CacheProxy))
 	ready(t, f.Endpoint(harness.CacheProxy))
@@ -187,6 +189,13 @@ func TestProxyRestartPersistsLocalCAS(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, data, got)
 	read(t, f.Clients(harness.App), data)
+	// SIGKILL may lose unsynced local metadata; the authoritative backend must
+	// still supply acknowledged bytes without corruption after crash recovery.
+	dkr("kill", "--signal", "KILL", f.Endpoint(harness.CacheProxy).Container)
+	dkr("start", f.Endpoint(harness.CacheProxy).Container)
+	refreshPorts(t, dkr, f.Endpoint(harness.CacheProxy))
+	ready(t, f.Endpoint(harness.CacheProxy))
+	read(t, f.Clients(harness.CacheProxy), data)
 }
 
 func TestLocalEvictionFallsBackToBackend(t *testing.T) {

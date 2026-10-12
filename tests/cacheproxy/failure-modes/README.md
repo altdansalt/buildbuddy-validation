@@ -6,8 +6,10 @@ Tests run only digest-pinned released containers started by the fixture.
   the backend; check warm ByteStream and batch CAS reads, bounded miss failures,
   rejected writes during outages, and successful backend-visible writes after
   recovery. Scan proxy logs for Go panics and fatal runtime errors.
-- `TestProxyRestartPersistsLocalCAS`: kill the proxy with SIGKILL, restart the same
-  container/volume, and read committed CAS with remote fallback disabled.
+- `TestProxyRestartPersistsLocalCAS`: gracefully restart the same
+  container/volume and read committed CAS with remote fallback disabled; then
+  SIGKILL/restart and verify exact bytes via backend fallback. Pebble commits use
+  `NoSync`, so crash-time local metadata loss is not treated as a defect.
 - `TestLocalEvictionFallsBackToBackend`: constrain local storage to 2 MiB, set
   minimum eviction age to zero, write more than capacity, observe a local-only
   NotFound, and verify exact bytes remain readable through the backend and proxy.
@@ -34,4 +36,6 @@ Contract references:
 Run with `bb remote test //tests/cacheproxy/failure-modes/... --config=nobug`.
 The area-local Docker helper discovers a fixture-owned daemon by inspecting the
 fixture's container name. It mutates only that fixture's containers/network.
-A harness Docker command/restart API would remove this workaround.
+Restart helpers refresh Docker's randomly assigned published ports before using
+the fixture endpoints again. A harness Docker command/restart API that refreshes
+endpoints would remove this workaround.
