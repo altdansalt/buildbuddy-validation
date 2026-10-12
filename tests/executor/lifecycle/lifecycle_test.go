@@ -137,6 +137,7 @@ func TestRegistrationHealthAndRestart(t *testing.T) {
 	d("stop", "--time", "40", ep.Container)
 	require.Equal(t, "0", d("inspect", "--format", "{{.State.ExitCode}}", ep.Container))
 	d("start", ep.Container)
+	ep.HTTP = "http://" + d("port", ep.Container, "8080/tcp")
 	require.Eventually(t, func() bool { return probe(ep, "/readyz", false) == 200 }, time.Minute, 250*time.Millisecond)
 	execute(t, f, "printf 'lifecycle-ok\\n'", nil)
 	logs := d("logs", ep.Container)
@@ -194,6 +195,7 @@ func TestInvalidBuildRootFailsAndRecovers(t *testing.T) {
 	require.NotContains(t, logs, "panic:")
 	d("cp", original, ep.Container+":/config.yaml")
 	d("start", ep.Container)
+	ep.HTTP = "http://" + d("port", ep.Container, "8080/tcp")
 	require.Eventually(t, func() bool { return probe(ep, "/readyz", false) == 200 }, time.Minute, 250*time.Millisecond)
 	execute(t, f, "printf 'lifecycle-ok\\n'", nil)
 }
