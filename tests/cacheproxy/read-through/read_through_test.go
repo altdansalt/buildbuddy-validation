@@ -60,6 +60,9 @@ func TestColdWarmAndPartialReads(t *testing.T) {
 	}{{"prefix", 0, 17}, {"middle", 12345, 100001}, {"suffix", int64(len(data) - 31), 0}, {"eof", int64(len(data)), 0}} {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := append(append([]byte(nil), data...), []byte(tc.name)...)
+			if tc.name == "eof" {
+				tc.offset = int64(len(payload))
+			}
 			d, err := app.Write(ctx, instance, payload, false)
 			require.NoError(t, err)
 			_, err = proxy.Read(local(ctx), instance, d)
