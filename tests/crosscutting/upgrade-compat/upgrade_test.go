@@ -80,7 +80,8 @@ func TestStorageUpgrade(t *testing.T) {
 	// pre-upgrade readback, while checking the client-supplied output fields.
 	stored, err := c.AC.GetActionResult(ctx, &repb.GetActionResultRequest{InstanceName: instance, ActionDigest: action})
 	require.NoError(t, err)
-	require.Equal(t, expected.OutputFiles, stored.OutputFiles)
+	require.Len(t, stored.OutputFiles, 1)
+	require.True(t, proto.Equal(expected.OutputFiles[0], stored.OutputFiles[0]))
 	require.Equal(t, expected.StderrRaw, stored.StderrRaw)
 	expected = stored
 	invocationID := uuid.NewString()
