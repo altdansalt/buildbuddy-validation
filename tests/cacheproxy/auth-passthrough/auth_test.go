@@ -85,6 +85,19 @@ func TestActionCacheNamespaces(t *testing.T) {
 	r, err := p.AC.GetActionResult(harness.WithAPIKey(ctx, sameKey), &repb.GetActionResultRequest{InstanceName: "tenant", ActionDigest: digest})
 	require.NoError(t, err)
 	require.Equal(t, int32(2), r.ExitCode)
+	// CAS_WRITE permits CAS uploads but deliberately makes AC updates a no-op.
+	// BuildBuddy returns success for this no-op so Bazel does not fail.
+	casKey := f.Web.CreateAPIKey(t, f.GroupID, "CAS-only writer", []string{"CAS_WRITE"})
+	limited := harness.Dial(t, f.Endpoint(harness.CacheProxy).GRPC, casKey)
+	_, err = limited.Upload(ctx, "tenant", []byte("CAS-only credential forwards"))
+	require.NoError(t, err)
+	_, err = limited.AC.UpdateActionResult(ctx, &repb.UpdateActionResultRequest{InstanceName: "tenant", ActionDigest: digest, ActionResult: &repb.ActionResult{ExitCode: 99}})
+	require.NoError(t, err)
+	for _, c := range []*harness.Clients{f.Clients(harness.App), p} {
+		got, err := c.AC.GetActionResult(harness.WithAPIKey(ctx, f.APIKey), &repb.GetActionResultRequest{InstanceName: "tenant", ActionDigest: digest})
+		require.NoError(t, err)
+		require.Equal(t, int32(2), got.ExitCode, "CAS-only key must not change AC")
+	}
 }
 
 func TestCASInstanceAndCredentialPassthrough(t *testing.T) {

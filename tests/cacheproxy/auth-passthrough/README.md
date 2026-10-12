@@ -1,13 +1,15 @@
 # Auth and instance passthrough
 
 Run with `bb remote test //tests/cacheproxy/auth-passthrough/... --config=nobug`.
-All peers are fixture-local released app/proxy containers.
+All peers are fixture-local released app/proxy containers. Upstream anonymous
+access is disabled so upstream fallback cannot mask missing credentials.
 
 The action-cache matrix writes one digest with different results under two
 organizations and four instances, then concurrently reads it through the app
 and a shared proxy connection with alternating API keys. Requests opt into a
 one-hour proxy action-cache TTL to exercise local hits. A second key belonging
-to the first organization must see that organization's entry. Missing/invalid
+to the first organization must see that organization's entry. A CAS_WRITE-only
+key can upload blobs but cannot change action-cache results. Missing/invalid
 credentials must fail even after caches are warmed.
 
 CAS coverage includes batch and ByteStream uploads, direct upstream readback,
@@ -25,5 +27,5 @@ Contracts inspected at released BuildBuddy v2.314.0:
 
 The action and command are uploaded before UpdateActionResult as required by
 REAPI. Rejected credentials may return PermissionDenied (the remote
- authenticator's missing-key contract) or Unauthenticated; success and server
+authenticator's missing-key contract) or Unauthenticated; success and server
 errors are never accepted.
