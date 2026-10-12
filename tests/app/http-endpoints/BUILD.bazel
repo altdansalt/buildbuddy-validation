@@ -1,0 +1,28 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "http_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["http_test.go"],
+    tags = ["local", "requires-network"],
+    deps = ["//harness:go_default_library"],
+)
+
+go_test(
+    name = "protolet_content_type_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["content_type_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = ["//harness:go_default_library"],
+)
+
+go_test(
+    name = "missing_invocation_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["missing_invocation_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = ["//harness:go_default_library"],
+)
