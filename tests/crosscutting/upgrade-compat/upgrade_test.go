@@ -146,21 +146,17 @@ func publishInvocation(t *testing.T, ctx context.Context, c *harness.Clients, id
 	streamID := &bespb.StreamId{BuildId: id, InvocationId: id, Component: bespb.StreamId_TOOL}
 	for i, event := range [][]byte{first, finished} {
 		require.NoError(t, s.Send(&bespb.PublishBuildToolEventStreamRequest{OrderedBuildEvent: &bespb.OrderedBuildEvent{StreamId: streamID, SequenceNumber: int64(i + 1), Event: &bespb.BuildEvent{EventTime: timestamppb.Now(), Event: &bespb.BuildEvent_BazelEvent{BazelEvent: &anypb.Any{TypeUrl: "type.googleapis.com/build_event_stream.BuildEvent", Value: event}}}}}))
-		ack, err := s.Recv()
-		require.NoError(t, err)
-		require.Equal(t, int64(i+1), ack.SequenceNumber)
 	}
 	require.NoError(t, s.Send(&bespb.PublishBuildToolEventStreamRequest{OrderedBuildEvent: &bespb.OrderedBuildEvent{StreamId: streamID, SequenceNumber: 3, Event: &bespb.BuildEvent{EventTime: timestamppb.Now(), Event: &bespb.BuildEvent_ComponentStreamFinished{ComponentStreamFinished: &bespb.BuildEvent_BuildComponentStreamFinished{Type: bespb.BuildEvent_BuildComponentStreamFinished_FINISHED}}}}}))
-	_, err = s.Recv()
-	require.NoError(t, err)
+	// The released server acknowledges only after EOF and finalization.
 	require.NoError(t, s.CloseSend())
-	for {
-		_, err = s.Recv()
-		if err == io.EOF {
-			break
-		}
+	for sequence := int64(1); sequence <= 3; sequence++ {
+		ack, err := s.Recv()
 		require.NoError(t, err)
+		require.Equal(t, sequence, ack.SequenceNumber)
 	}
+	_, err = s.Recv()
+	require.Equal(t, io.EOF, err)
 }
 func readInvocation(t *testing.T, w *harness.WebSession, group, id string) map[string]any {
 	t.Helper()
