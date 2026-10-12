@@ -21,6 +21,7 @@ func TestActionCacheNamespaces(t *testing.T) {
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	ctx = metadata.AppendToOutgoingContext(ctx, "x-buildbuddy-platform.cache-proxy-action-cache-ttl", "1h")
 	group := f.Web.CreateGroup(t, "auth passthrough second group")
 	keys := []string{f.APIKey, f.Web.CreateAPIKey(t, group, "second writer", []string{"CACHE_WRITE"})}
 	instances := []string{"", "tenant", "tenant/nested", "tenant-nested"}
@@ -69,6 +70,15 @@ func TestActionCacheNamespaces(t *testing.T) {
 			}
 		}
 		wg.Wait()
+	}
+	// A warmed action-cache entry must still require credentials.
+	for _, key := range []string{"", "invalid-local-key"} {
+		bad := ctx
+		if key != "" {
+			bad = harness.WithAPIKey(ctx, key)
+		}
+		_, err := p.AC.GetActionResult(bad, &repb.GetActionResultRequest{InstanceName: "tenant", ActionDigest: digest})
+		require.Contains(t, []codes.Code{codes.Unauthenticated, codes.PermissionDenied}, status.Code(err))
 	}
 	// A second key in the same group must address the same namespace.
 	sameKey := f.Web.CreateAPIKey(t, f.GroupID, "same group writer", []string{"CACHE_WRITE"})
