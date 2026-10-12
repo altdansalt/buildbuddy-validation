@@ -11,12 +11,17 @@ Coverage:
 - `toplevel`: final output is materialized, intermediate remains remote.
 - `all`: both outputs are materialized.
 - Every mode uses `--remote_cache_async`, with and without `--disk_cache`.
+  Additional local-execution cases force fresh async uploads rather than merely
+  consuming executor-uploaded outputs. Every case has a separate remote instance.
 - A second fresh output base verifies cache reuse and the same materialization
   policy; batch process exit provides the asynchronous upload completion barrier.
-- App and proxy reject an AC entry whose referenced output bytes are missing,
+- App and proxy reject AC entries with a missing output file, nested tree leaf,
+  or Tree message,
   then serve the same entry after the bytes are restored. Action and Command
   protos are uploaded as required by REAPI. This constructs the post-eviction
   state; it does not exercise the Pebble eviction mechanism itself.
+- Execution bypasses a dangling cached result, regenerates missing bytes, and
+  serves the repaired result as a cache hit on the next request.
 
 Contracts used:
 

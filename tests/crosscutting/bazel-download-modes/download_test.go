@@ -54,11 +54,19 @@ genrule(name="final", srcs=[":intermediate"], outs=["final.txt"], cmd="cat $(loc
 `)
 	// Each output base starts cold, so a previous local materialization cannot
 	// accidentally satisfy a subsequent download-policy assertion.
-	for _, mode := range []string{"minimal", "toplevel", "all"} {
+	cases := []struct {
+		mode   string
+		remote bool
+	}{{"minimal", true}, {"toplevel", true}, {"all", true}, {"all", false}}
+	for _, scenario := range cases {
+		mode := scenario.mode
 		for _, disk := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/disk=%t", mode, disk), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/remote-exec=%t/disk=%t", mode, scenario.remote, disk), func(t *testing.T) {
 				base := t.TempDir()
-				args := []string{"--batch", "--output_base=" + base, "--ignore_all_rc_files", "build", "//:final", "--enable_bzlmod=false", "--jobs=2", "--remote_cache=grpc://" + f.Endpoint(harness.App).GRPC, "--remote_executor=grpc://" + f.Endpoint(harness.App).GRPC, "--remote_header=x-buildbuddy-api-key=" + f.APIKey, "--remote_download_outputs=" + mode, "--remote_cache_async", "--remote_timeout=60", "--remote_default_exec_properties=OSFamily=linux", "--remote_default_exec_properties=Arch=amd64", "--remote_default_exec_properties=workload-isolation-type=none"}
+				args := []string{"--batch", "--output_base=" + base, "--ignore_all_rc_files", "build", "//:final", "--enable_bzlmod=false", "--jobs=2", "--remote_cache=grpc://" + f.Endpoint(harness.App).GRPC, "--remote_header=x-buildbuddy-api-key=" + f.APIKey, "--remote_download_outputs=" + mode, "--remote_cache_async", "--remote_instance_name=" + fmt.Sprintf("%s-%t-%t", mode, scenario.remote, disk), "--remote_timeout=60", "--remote_default_exec_properties=OSFamily=linux", "--remote_default_exec_properties=Arch=amd64", "--remote_default_exec_properties=workload-isolation-type=none"}
+				if scenario.remote {
+					args = append(args, "--remote_executor=grpc://"+f.Endpoint(harness.App).GRPC)
+				}
 				if disk {
 					args = append(args, "--disk_cache="+t.TempDir())
 				}
@@ -158,5 +166,54 @@ func TestActionCacheMissingOutputBytes(t *testing.T) {
 				require.Equal(t, missingBytes, b)
 			})
 		}
+	}
+}
+
+func TestExecutionRecoversMissingCachedOutput(t *testing.T) {
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	c := f.Clients(harness.App)
+	instance := "execution-missing-output"
+	payload := []byte("regenerated output\n")
+	output := harness.Digest(payload)
+	root, err := c.UploadProto(ctx, instance, &repb.Directory{})
+	require.NoError(t, err)
+	command, err := c.UploadProto(ctx, instance, &repb.Command{
+		Arguments:   []string{"/bin/sh", "-c", "printf 'regenerated output\\n' > out"},
+		OutputPaths: []string{"out"},
+		Platform:    &repb.Platform{Properties: []*repb.Platform_Property{{Name: "OSFamily", Value: "linux"}, {Name: "Arch", Value: "amd64"}, {Name: "workload-isolation-type", Value: "none"}}},
+	})
+	require.NoError(t, err)
+	action, err := c.UploadProto(ctx, instance, &repb.Action{CommandDigest: command, InputRootDigest: root})
+	require.NoError(t, err)
+	_, err = c.AC.UpdateActionResult(ctx, &repb.UpdateActionResultRequest{InstanceName: instance, ActionDigest: action, ActionResult: &repb.ActionResult{OutputFiles: []*repb.OutputFile{{Path: "out", Digest: output}}}})
+	require.NoError(t, err)
+	missing, err := c.CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{InstanceName: instance, BlobDigests: []*repb.Digest{output}})
+	require.NoError(t, err)
+	require.Len(t, missing.MissingBlobDigests, 1)
+	for _, cached := range []bool{false, true} {
+		stream, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: instance, ActionDigest: action})
+		require.NoError(t, err)
+		var response *repb.ExecuteResponse
+		for {
+			op, err := stream.Recv()
+			require.NoError(t, err, "execution ended before a completed operation")
+			if !op.Done {
+				continue
+			}
+			require.Nil(t, op.GetError())
+			response = &repb.ExecuteResponse{}
+			require.NoError(t, op.GetResponse().UnmarshalTo(response))
+			break
+		}
+		require.Zero(t, response.GetStatus().GetCode(), "%v", response.GetStatus())
+		require.Zero(t, response.GetResult().GetExitCode())
+		require.Equal(t, cached, response.CachedResult, "first execution must rebuild; second must reuse restored bytes")
+		require.Len(t, response.Result.OutputFiles, 1)
+		require.Equal(t, output, response.Result.OutputFiles[0].Digest)
+		b, err := c.Read(ctx, instance, output)
+		require.NoError(t, err)
+		require.Equal(t, payload, b)
 	}
 }
