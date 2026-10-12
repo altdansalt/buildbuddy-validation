@@ -3,6 +3,7 @@ package storagegc_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -119,6 +120,21 @@ func docker(t *testing.T, f *harness.Fixture, args ...string) []byte {
 	return nil
 }
 
+// Docker may assign new ephemeral published ports when restarting a container.
+func refreshEndpoints(t *testing.T, f *harness.Fixture) {
+	t.Helper()
+	out := docker(t, f, "inspect", "--format", "{{json .NetworkSettings.Ports}}", f.Endpoint(harness.App).Container)
+	var ports map[string][]struct {
+		HostIP   string
+		HostPort string
+	}
+	require.NoError(t, json.Unmarshal(out, &ports))
+	require.NotEmpty(t, ports["8080/tcp"])
+	require.NotEmpty(t, ports["1985/tcp"])
+	f.Endpoint(harness.App).HTTP = "http://127.0.0.1:" + ports["8080/tcp"][0].HostPort
+	f.Endpoint(harness.App).GRPC = "127.0.0.1:" + ports["1985/tcp"][0].HostPort
+}
+
 func TestCrashPersistenceAndPartialWrite(t *testing.T) {
 	for _, v2 := range []bool{false, true} {
 		t.Run(fmt.Sprintf("v2=%t", v2), func(t *testing.T) {
@@ -141,6 +157,7 @@ func TestCrashPersistenceAndPartialWrite(t *testing.T) {
 			docker(t, f, "kill", "--signal=KILL", name)
 			_, _ = stream.CloseAndRecv()
 			docker(t, f, "start", name)
+			refreshEndpoints(t, f)
 			client := &http.Client{Timeout: 2 * time.Second}
 			require.Eventually(t, func() bool {
 				r, err := client.Get(f.Endpoint(harness.App).HTTP + "/readyz?server-type=app")
@@ -158,6 +175,7 @@ func TestCrashPersistenceAndPartialWrite(t *testing.T) {
 			checkBlob(t, ctx, c, pd, partial, false)
 			// Also verify a graceful restart preserves both committed entries.
 			docker(t, f, "restart", "--time=20", name)
+			refreshEndpoints(t, f)
 			require.Eventually(t, func() bool {
 				r, err := client.Get(f.Endpoint(harness.App).HTTP + "/readyz?server-type=app")
 				if err != nil {
