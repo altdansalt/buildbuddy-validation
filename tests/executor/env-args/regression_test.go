@@ -51,3 +51,20 @@ func TestWorkingDirectory(t *testing.T) {
 	// A rejected action must not poison the executor for subsequent requests.
 	require.Equal(t, "healthy", stdout(t, c, execute(t, c, root, &repb.Command{Arguments: []string{"/bin/sh", "-c", "printf healthy"}})))
 }
+
+func TestLargeArgumentAndConcurrentEnvironments(t *testing.T) {
+	c := fixture(t)
+	root := upload(t, c, &repb.Directory{})
+	// Stay below Linux's per-string execve limit while checking argument fidelity.
+	big := strings.Repeat("ab雪", 12000)
+	require.Equal(t, big, stdout(t, c, execute(t, c, root, &repb.Command{Arguments: []string{"/bin/sh", "-c", `printf '%s' "$1"`, "argv0", big}})))
+	// Every action uses the same name with a different value. Parallel execution
+	// must preserve action-local state even when runners are allocated concurrently.
+	for i := 0; i < 4; i++ {
+		value := fmt.Sprintf("action-%d", i)
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, value, stdout(t, c, execute(t, c, root, &repb.Command{Arguments: []string{"/bin/sh", "-c", `printf '%s' "$VALUE"`}, EnvironmentVariables: []*repb.Command_EnvironmentVariable{{Name: "VALUE", Value: value}}})))
+		})
+	}
+}
