@@ -10,6 +10,8 @@ Redis, network, and volume; lifecycle commands name only that fixture's app.
   settles, at most four can remain. FindMissingBlobs, ByteStream.Read, and
   BatchReadBlobs must agree about each entry, with exact bytes or NOT_FOUND.
   Reuploading an evicted digest must restore readable data.
+- Concurrent pressure: three writers/readers churn a small cache; reads may
+  miss but must return exact bytes when successful, never partial data or INTERNAL.
 - Persistence: committed data survives SIGKILL and a graceful restart; an open,
   unfinished ByteStream upload is absent before and after SIGKILL. Completing
   a fresh upload of the same digest succeeds and survives the next restart.

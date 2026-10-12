@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,5 +170,44 @@ func TestCrashPersistenceAndPartialWrite(t *testing.T) {
 			checkBlob(t, ctx, c, d, data, false)
 			checkBlob(t, ctx, c, pd, partial, false)
 		})
+	}
+}
+
+// Eviction may race a reader. A read can report a miss, but must never return
+// truncated or different content, or turn an ordinary miss into INTERNAL.
+func TestConcurrentReadsDuringEviction(t *testing.T) {
+	f := fixture(t, true, 256<<10)
+	c := f.Clients(harness.App)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	var wg sync.WaitGroup
+	errors := make(chan error, 3)
+	for worker := 0; worker < 3; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			for i := 0; i < 30; i++ {
+				data := bytes.Repeat([]byte{byte(1 + worker*30 + i)}, 64<<10)
+				d, err := c.Write(ctx, "", data, false)
+				if err != nil {
+					errors <- fmt.Errorf("write worker %d: %w", worker, err)
+					return
+				}
+				b, err := c.Read(ctx, "", d)
+				if err != nil && status.Code(err) != codes.NotFound {
+					errors <- fmt.Errorf("read worker %d: %w", worker, err)
+					return
+				}
+				if err == nil && !bytes.Equal(b, data) {
+					errors <- fmt.Errorf("read worker %d: corrupted or truncated bytes", worker)
+					return
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
+	close(errors)
+	for err := range errors {
+		require.NoError(t, err)
 	}
 }
