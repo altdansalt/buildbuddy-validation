@@ -84,6 +84,32 @@ func TestActionCache(t *testing.T) {
 			}
 		}
 	})
+	t.Run("parallel_independent_actions", func(t *testing.T) {
+		type outcome struct {
+			err       error
+			want, got *repb.ActionResult
+		}
+		done := make(chan outcome, 12)
+		for i := 0; i < 12; i++ {
+			instance := fmt.Sprintf("parallel/%d", i)
+			d := action(t, ctx, app, instance)
+			go func() {
+				want, err := proxy.AC.UpdateActionResult(ctx, &repb.UpdateActionResultRequest{InstanceName: instance, ActionDigest: d, ActionResult: &repb.ActionResult{StdoutRaw: []byte(instance)}})
+				if err != nil {
+					done <- outcome{err: err}
+					return
+				}
+				got, err := proxy.AC.GetActionResult(ctx, &repb.GetActionResultRequest{InstanceName: instance, ActionDigest: d})
+				done <- outcome{err: err, want: want, got: got}
+			}()
+		}
+		for i := 0; i < 12; i++ {
+			r := <-done
+			require.NoError(t, r.err)
+			require.True(t, proto.Equal(r.want, r.got))
+		}
+	})
+
 	t.Run("missing_outputs_and_recovery", func(t *testing.T) {
 		instance := "output-validation"
 		d := action(t, ctx, app, instance)
