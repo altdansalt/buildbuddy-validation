@@ -27,7 +27,9 @@ func TestMissingCommandIdentifiesCommandDigest(t *testing.T) {
 	// Establish that the action is available and only the command is absent.
 	missing, err := c.CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{InstanceName: "missing-command", BlobDigests: []*repb.Digest{action, root, command}})
 	require.NoError(t, err)
-	require.Equal(t, []*repb.Digest{command}, missing.MissingBlobDigests)
+	require.Len(t, missing.MissingBlobDigests, 1)
+	require.Equal(t, command.Hash, missing.MissingBlobDigests[0].Hash)
+	require.Equal(t, command.SizeBytes, missing.MissingBlobDigests[0].SizeBytes)
 	s, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: "missing-command", ActionDigest: action, SkipCacheLookup: true})
 	if err == nil {
 		_, err = s.Recv()

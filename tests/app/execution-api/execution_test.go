@@ -90,7 +90,8 @@ func finish(t *testing.T, s interface {
 		require.Nil(t, op.GetError())
 		md := &repb.ExecuteOperationMetadata{}
 		require.NoError(t, op.GetMetadata().UnmarshalTo(md))
-		require.Equal(t, digest, md.ActionDigest)
+		require.Equal(t, digest.Hash, md.GetActionDigest().GetHash())
+		require.Equal(t, digest.SizeBytes, md.GetActionDigest().GetSizeBytes())
 		if op.Done {
 			require.Equal(t, repb.ExecutionStage_COMPLETED, md.Stage)
 			result = &repb.ExecuteResponse{}
