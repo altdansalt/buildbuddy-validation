@@ -140,7 +140,9 @@ func publishInvocation(t *testing.T, ctx context.Context, c *harness.Clients, id
 	started = append(started, field(5, []byte("build"))...)
 	first := append(field(1, field(3, nil)), field(2, field(9, nil))...)
 	first = append(first, field(5, started)...)
-	finished := append(field(1, field(9, nil)), field(14, field(3, append(field(1, []byte("SUCCESS")), number(2, 0)...)))...)
+	// Supply an actual finish time, as a real Bazel producer does.
+	finishPayload := append(field(3, append(field(1, []byte("SUCCESS")), number(2, 0)...)), number(2, uint64(time.Now().UnixMilli()))...)
+	finished := append(field(1, field(9, nil)), field(14, finishPayload)...)
 	finished = append(finished, number(20, 1)...)
 	s, err := c.BES.PublishBuildToolEventStream(ctx)
 	require.NoError(t, err)
@@ -175,7 +177,19 @@ func readInvocation(t *testing.T, w *harness.WebSession, group, id string) map[s
 		inv := invs[0].(map[string]any)
 		return inv["invocationStatus"] == float64(1) || inv["invocationStatus"] == "COMPLETE_INVOCATION_STATUS"
 	}, 30*time.Second, 250*time.Millisecond, "invocation not complete: %v", result)
-	// Compare the full persisted invocation including events, not just its ID.
+	inv := result["invocation"].([]any)[0].(map[string]any)
+	require.Equal(t, id, inv["invocationId"])
+	require.Equal(t, true, inv["success"])
+	require.Equal(t, "SUCCESS", inv["bazelExitCode"])
+	require.Equal(t, "build", inv["command"])
+	require.Len(t, inv["event"], 2)
+	// Finalization asynchronously updates the DB timestamp after COMPLETE is
+	// visible. Scorecard presence is response enrichment, not persisted BEP.
+	delete(inv, "updatedAtUsec")
+	if score, ok := inv["scoreCard"].(map[string]any); ok && len(score) == 0 {
+		delete(inv, "scoreCard")
+	}
+	// Compare all remaining metadata and the entire stored event payloads.
 	return result
 }
 
