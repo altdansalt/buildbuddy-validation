@@ -15,7 +15,7 @@ bridge network for the network-on check; network-off checks require only loopbac
 No network assertion depends on Internet connectivity. Image pulls use the runner's
 network. The socket is not mounted into action containers.
 
-Coverage: image tag and digest references, missing tags, explicit numeric UID/GID,
+Coverage: image tag and digest references, missing tags, unauthenticated private-registry denial, explicit numeric UID/GID,
 working directories, environment values, CAS inputs and outputs through workspace
 mounts, configured read-only mounts, network on/off and property precedence,
 invalid network status, nonzero process exits, filesystem cleanup between actions,
@@ -38,7 +38,7 @@ specific gRPC code for Docker registry failures: the REAPI does not standardize
 an image registry error mapping. Invalid network values, in contrast, are
 explicitly rejected as INVALID_ARGUMENT by the released platform parser.
 
-Follow-up coverage: authenticated private registries, mutable-tag updates,
+Follow-up coverage: successful authenticated private-registry pulls, mutable-tag updates,
 concurrent actions, cancellation during pulls, named image users, Podman and OCI
 providers, and recycled runners. These tests deliberately use fresh runners;
 they do not infer guarantees about recycled container `/tmp` state.

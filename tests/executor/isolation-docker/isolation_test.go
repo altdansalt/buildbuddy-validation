@@ -3,11 +3,14 @@ package isolation_test
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -223,6 +226,26 @@ func TestDockerIsolation(t *testing.T) {
 		r := execute(t, f, "alpine:3.21.3", "echo must-not-run", "", map[string]string{"network": "invalid"})
 		require.EqualValues(t, 3, r.GetStatus().GetCode())
 		require.Empty(t, stdout(t, f, r))
+	})
+	t.Run("private_registry_denied", func(t *testing.T) {
+		var requests atomic.Int64
+		registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			requests.Add(1)
+			w.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
+			w.Header().Set("WWW-Authenticate", `Basic realm="fixture-private-registry"`)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			io.WriteString(w, `{"errors":[{"code":"UNAUTHORIZED","message":"authentication required"}]}`)
+		}))
+		defer registry.Close()
+		// Docker treats loopback registries as insecure, so no shared daemon config
+		// or external authentication provider is needed for this denial oracle.
+		image := strings.TrimPrefix(registry.URL, "http://") + "/private:latest"
+		r := execute(t, f, image, "echo must-not-run", "", nil)
+		require.Positive(t, requests.Load(), "pull must reach our local registry")
+		require.NotZero(t, r.GetStatus().GetCode())
+		require.Empty(t, stdout(t, f, r))
+		require.Contains(t, strings.ToLower(r.GetStatus().GetMessage()), "auth")
 	})
 	t.Run("missing_tag", func(t *testing.T) {
 		r := execute(t, f, "alpine:bbval-nonexistent-tag-20261012", "echo must-not-run", "", nil)
