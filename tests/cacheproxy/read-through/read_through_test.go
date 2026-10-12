@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -24,7 +25,21 @@ const instance = "read-through"
 
 func fixture(t *testing.T) (*harness.Fixture, context.Context) {
 	t.Helper()
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}})
+	var f *harness.Fixture
+	// Registered before Start so this runs after the harness saves container logs.
+	t.Cleanup(func() {
+		if f == nil {
+			return
+		}
+		for _, component := range []harness.Component{harness.App, harness.CacheProxy} {
+			ep := f.Endpoint(component)
+			b, err := os.ReadFile(filepath.Join(f.OutputDir, ep.Container+".logs.txt"))
+			require.NoError(t, err)
+			require.NotContains(t, string(b), "panic:", "%s container panic", component)
+			require.NotContains(t, string(b), "fatal error:", "%s runtime failure", component)
+		}
+	})
+	f = harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
 	return f, ctx
