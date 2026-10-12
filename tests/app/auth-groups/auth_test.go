@@ -9,7 +9,9 @@ import (
 	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestGroupAndKeyBoundaries(t *testing.T) {
@@ -46,7 +48,10 @@ func TestGroupAndKeyBoundaries(t *testing.T) {
 	get(a, 11)
 	get(b, 22)
 	for name, c := range map[string]*harness.Clients{"writer": a, "reader": ro, "cas": cas} {
-		caps, err := c.Capabilities.GetCapabilities(ctx, &repb.GetCapabilitiesRequest{InstanceName: instance})
+		md, err := proto.Marshal(&repb.RequestMetadata{ToolDetails: &repb.ToolDetails{ToolName: "bazel", ToolVersion: "8.0.0"}})
+		require.NoError(t, err)
+		capsCtx := metadata.AppendToOutgoingContext(ctx, "build.bazel.remote.execution.v2.requestmetadata-bin", string(md))
+		caps, err := c.Capabilities.GetCapabilities(capsCtx, &repb.GetCapabilitiesRequest{InstanceName: instance})
 		require.NoError(t, err)
 		require.Equal(t, name == "writer", caps.GetCacheCapabilities().GetActionCacheUpdateCapabilities().GetUpdateEnabled())
 	}
