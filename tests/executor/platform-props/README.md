@@ -21,9 +21,11 @@ Coverage includes command fallback, action-only properties, conflicting action
 and command properties, a present empty action platform, mixed case names and
 OS/architecture values, trimmed values, duplicate images, empty/none/real/malformed
 image values with bare isolation, invalid and case-mismatched isolation, invalid
-duration, invalid VFS prefetch mode, and invalid base64 environment overrides.
+duration, invalid VFS prefetch mode, and invalid base64 environment overrides, and unavailable OS/architecture pools.
+Unsupported isolation and absent machine pools return scheduler UNAVAILABLE,
+while executor/parser validation failures return INVALID_ARGUMENT.
 
 The baseline enables only bare isolation. Image tests assert that a real image
 is rejected instead of silently running on the host; they do not exercise Docker
-pulls or OCI-reference validation in a Docker provider. Unsupported OS/architecture
-scheduling and resource-property parsing remain follow-up work.
+pulls or OCI-reference validation in a Docker provider. Unsupported OS/architecture requests assert scheduler rejection. Resource-property
+parsing remains follow-up work.
