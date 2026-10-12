@@ -13,7 +13,7 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["capabilities_test.go"],
+    srcs = ["capabilities_test.go", "helpers_test.go"],
     tags = ["local", "requires-network"],
     deps = DEPS,
 )
@@ -22,8 +22,16 @@ go_test(
     name = "proxy_execution_bug_test",
     size = "large",
     timeout = "long",
-    srcs = ["capabilities_test.go", "proxy_execution_test.go"],
-    args = ["-test.run=^TestProxyExecutionAdvertisement$"],
+    srcs = ["helpers_test.go", "proxy_execution_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "batch_limit_bug_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "batch_limit_test.go"],
     tags = ["bug", "local", "requires-network"],
     deps = DEPS,
 )

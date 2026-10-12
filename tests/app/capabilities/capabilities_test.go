@@ -2,7 +2,6 @@ package capabilities_test
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -10,22 +9,13 @@ import (
 	"fmt"
 	"io"
 	"testing"
-	"time"
 
 	"github.com/altdansalt/buildbuddy-validation/harness"
 	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/stretchr/testify/require"
 	bspb "google.golang.org/genproto/googleapis/bytestream"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
-
-func bounded(t *testing.T) context.Context {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	t.Cleanup(cancel)
-	return ctx
-}
 
 func TestAdvertisedCacheBehavior(t *testing.T) {
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}})
@@ -128,9 +118,10 @@ func TestAdvertisedCacheBehavior(t *testing.T) {
 					require.Equal(t, plain, wire)
 				})
 			}
-			// Zero means no application-level limit, not a 4 MiB batch limit.
-			require.Zero(t, cc.GetMaxBatchTotalSizeBytes())
-			large := bytes.Repeat([]byte("L"), 5<<20)
+			// Exercise a batch comfortably below the implementation read limit.
+			large := bytes.Repeat([]byte("L"), 1<<20)
+			limit := cc.GetMaxBatchTotalSizeBytes()
+			require.True(t, limit == 0 || limit >= int64(len(large)), "regression batch must fit the advertised limit")
 			d, err := c.Upload(ctx, "batch-limit", large)
 			require.NoError(t, err)
 			read, err := c.CAS.BatchReadBlobs(ctx, &repb.BatchReadBlobsRequest{InstanceName: "batch-limit", Digests: []*repb.Digest{d}, DigestFunction: repb.DigestFunction_SHA256})
@@ -172,24 +163,7 @@ func TestDisabledFeatures(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// Execute must be implemented on any endpoint that advertises exec_enabled.
-// A missing action may fail, but an unknown Execution service is inconsistent.
-func checkExecutionService(t *testing.T, c *harness.Clients) {
-	t.Helper()
-	ctx := bounded(t)
-	caps, err := c.Capabilities.GetCapabilities(ctx, &repb.GetCapabilitiesRequest{})
-	require.NoError(t, err)
-	require.True(t, caps.GetExecutionCapabilities().GetExecEnabled())
-	s, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{ActionDigest: harness.Digest([]byte("missing-action")), DigestFunction: repb.DigestFunction_SHA256})
-	if err == nil {
-		_, err = s.Recv()
-	}
-	require.Error(t, err)
-	require.NotEqual(t, io.EOF, err)
-	require.NotEqual(t, codes.Unimplemented, status.Code(err), "exec_enabled=true but Execute is unavailable: %v", err)
-}
-
 func TestAppExecutionAdvertisement(t *testing.T) {
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}})
-	checkExecutionService(t, f.Clients(harness.App))
+	checkExecutionService(t, f.Clients(harness.App), true)
 }
