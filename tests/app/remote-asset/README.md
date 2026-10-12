@@ -4,7 +4,9 @@ These tests address only the digest-pinned enterprise app started by `harness.St
 The origin is an HTTP listener owned by the test on the hosted runner. The app's
 `remote_asset.allowed_private_ips` allowlist includes only that runner interface
 (`/32`); this is necessary because private origins are denied by default. No
-external asset origins or shared BuildBuddy deployments are contacted.
+external asset origins or shared BuildBuddy deployments are contacted. A bounded
+Fetch-to-CAS preflight waits for the app's internal gRPC client to reconnect after
+startup; HTTP readiness alone can precede that reconnection.
 
 Run passing coverage:
 

@@ -33,7 +33,7 @@ func TestFetchRegression(t *testing.T) {
 	t.Run("mirror fallback and CAS readback", func(t *testing.T) {
 		resp, err := fetch.FetchBlob(ctx, &asset.FetchBlobRequest{Uris: []string{origin + "/missing", origin + "/blob"}, Qualifiers: []*asset.Qualifier{sri("asset content")}})
 		require.NoError(t, err)
-		require.EqualValues(t, codes.OK, resp.GetStatus().GetCode())
+		require.EqualValues(t, codes.OK, resp.GetStatus().GetCode(), "%v; origin requests=%d", resp.GetStatus(), hits.Load())
 		require.Equal(t, origin+"/blob", resp.Uri)
 		require.Equal(t, harnessDigest("asset content"), resp.BlobDigest.GetHash())
 		data, err := c.Read(ctx, "", resp.BlobDigest)
@@ -42,7 +42,7 @@ func TestFetchRegression(t *testing.T) {
 		before := hits.Load()
 		resp, err = fetch.FetchBlob(ctx, &asset.FetchBlobRequest{Uris: []string{origin + "/missing"}, Qualifiers: []*asset.Qualifier{sri("asset content")}})
 		require.NoError(t, err)
-		require.EqualValues(t, codes.OK, resp.GetStatus().GetCode())
+		require.EqualValues(t, codes.OK, resp.GetStatus().GetCode(), "%v; origin requests=%d", resp.GetStatus(), hits.Load())
 		require.Equal(t, before, hits.Load())
 	})
 	t.Run("unsupported qualifier details", func(t *testing.T) {
@@ -71,17 +71,17 @@ func TestFetchRegression(t *testing.T) {
 		q.Value += " " + sri("asset content").Value + "?option"
 		resp, err := fetch.FetchBlob(ctx, &asset.FetchBlobRequest{InstanceName: "alternatives", Uris: []string{origin + "/blob"}, Qualifiers: []*asset.Qualifier{q}})
 		require.NoError(t, err)
-		require.EqualValues(t, codes.OK, resp.GetStatus().GetCode())
+		require.EqualValues(t, codes.OK, resp.GetStatus().GetCode(), "%v; origin requests=%d", resp.GetStatus(), hits.Load())
 	})
 	t.Run("HTTP header qualifier", func(t *testing.T) {
 		resp, err := fetch.FetchBlob(ctx, &asset.FetchBlobRequest{Uris: []string{origin + "/header"}, Qualifiers: []*asset.Qualifier{{Name: "http_header:X-Test", Value: "fixture"}}})
 		require.NoError(t, err)
-		require.EqualValues(t, codes.OK, resp.GetStatus().GetCode())
+		require.EqualValues(t, codes.OK, resp.GetStatus().GetCode(), "%v; origin requests=%d", resp.GetStatus(), hits.Load())
 	})
 	t.Run("missing origin", func(t *testing.T) {
 		resp, err := fetch.FetchBlob(ctx, &asset.FetchBlobRequest{Uris: []string{origin + "/missing"}})
 		require.NoError(t, err)
-		require.EqualValues(t, codes.NotFound, resp.GetStatus().GetCode())
+		require.EqualValues(t, codes.NotFound, resp.GetStatus().GetCode(), "%v; origin requests=%d", resp.GetStatus(), hits.Load())
 	})
 	t.Run("unreachable local origin", func(t *testing.T) {
 		l, err := net.Listen("tcp4", "0.0.0.0:0")
@@ -92,7 +92,7 @@ func TestFetchRegression(t *testing.T) {
 		require.NoError(t, l.Close())
 		resp, err := fetch.FetchBlob(ctx, &asset.FetchBlobRequest{Uris: []string{"http://" + net.JoinHostPort(u.Hostname(), strconv.Itoa(port)) + "/blob"}})
 		require.NoError(t, err)
-		require.EqualValues(t, codes.NotFound, resp.GetStatus().GetCode())
+		require.EqualValues(t, codes.NotFound, resp.GetStatus().GetCode(), "%v; origin requests=%d", resp.GetStatus(), hits.Load())
 	})
 	t.Run("concurrent equivalent fetches", func(t *testing.T) {
 		var wg sync.WaitGroup

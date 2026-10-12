@@ -18,14 +18,14 @@ func TestOldestContentAccepted(t *testing.T) {
 	req := &asset.FetchBlobRequest{Uris: []string{origin + "/blob"}, Qualifiers: []*asset.Qualifier{sri("freshness content")}}
 	resp, err := fetch.FetchBlob(ctx, req)
 	require.NoError(t, err)
-	require.EqualValues(t, codes.OK, resp.GetStatus().GetCode())
+	require.EqualValues(t, codes.OK, resp.GetStatus().GetCode(), "%v", resp.GetStatus())
 	require.EqualValues(t, 1, hits.Load())
 	// Ensure the lower bound postdates the completed original retrieval.
 	time.Sleep(20 * time.Millisecond)
 	req.OldestContentAccepted = timestamppb.Now()
 	resp, err = fetch.FetchBlob(ctx, req)
 	require.NoError(t, err)
-	require.EqualValues(t, codes.OK, resp.GetStatus().GetCode())
+	require.EqualValues(t, codes.OK, resp.GetStatus().GetCode(), "%v", resp.GetStatus())
 	t.Logf("origin requests after freshness-constrained fetch: %d", hits.Load())
 	require.EqualValues(t, 2, hits.Load(), "content retrieved before oldest_content_accepted must be fetched again")
 }
