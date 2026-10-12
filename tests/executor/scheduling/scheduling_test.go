@@ -1,7 +1,6 @@
 package scheduling_test
 
 import (
-	longrunning "cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"context"
 	"fmt"
 	"io"
@@ -55,11 +54,7 @@ func execute(ctx context.Context, c *harness.Clients, d *repb.Digest) observatio
 	return receive(stream)
 }
 
-type operationStream interface {
-	Recv() (*longrunning.Operation, error)
-}
-
-func receive(stream operationStream) observation {
+func receive(stream repb.Execution_ExecuteClient) observation {
 	var o observation
 	for {
 		op, err := stream.Recv()
