@@ -5,7 +5,7 @@ Run `GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/grpc-edges/... --con
 All RPCs target the digest-pinned app started by the fixture. The suite exercises:
 
 - Forward-compatible unknown protobuf fields.
-- Invalid tags, truncated varints, illegal wire types, and invalid UTF-8.
+- Invalid tags, truncated varints, and illegal wire types.
 - Exactly 50,000,000 bytes and one byte over the default receive limit.
 - Repeated ASCII metadata and binary metadata containing non-UTF-8 bytes.
 - Concurrent successful and expired calls sharing a gRPC connection.
@@ -24,6 +24,10 @@ Behavior references:
 - [Remote Execution API capabilities contract](https://github.com/bazelbuild/remote-apis/blob/6def1c5d27a5/build/bazel/remote/execution/v2/remote_execution.proto)
 - [gRPC HTTP/2 protocol](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)
 - [gRPC status mapping](https://github.com/grpc/grpc/blob/master/doc/statuscodes.md)
+
+The separate `invalid_utf8_test` target is tagged `bug` and expects the server to reject
+invalid UTF-8 in a known proto3 string field. Run it with
+`--test_tag_filters=bug --nocache_test_results`.
 
 The malformed-request tests expect INTERNAL because gRPC explicitly maps request-proto
 parsing failures to that status; this alone is not evidence of an application defect.
