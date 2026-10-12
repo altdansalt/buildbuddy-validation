@@ -3,7 +3,7 @@ package failure_modes_test
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"crypto/rand"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -184,9 +184,11 @@ func TestLocalEvictionFallsBackToBackend(t *testing.T) {
 	defer cancel()
 	var payloads [][]byte
 	for i := 0; i < 32; i++ {
-		b := bytes.Repeat([]byte(fmt.Sprintf("eviction-%03d-", i)), 24000)
+		b := make([]byte, 256<<10)
+		_, err := rand.Read(b)
+		require.NoError(t, err)
 		payloads = append(payloads, b)
-		_, err := proxy.Write(ctx, instance, b, false)
+		_, err = proxy.Write(ctx, instance, b, false)
 		require.NoError(t, err)
 	}
 	var evicted []byte
