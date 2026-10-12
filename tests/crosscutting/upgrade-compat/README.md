@@ -41,3 +41,11 @@ Limitations: single-node SQLite/disk/Pebble only; no MySQL/Postgres, distributed
 cache, in-flight scheduler-state migration, downgrade, proxy persistence, or
 multi-release upgrade chain. The version-skew matrix covers the baseline bare
 runner, not container or VM isolation providers.
+
+Validation: [green Bazel invocation](https://app.buildbuddy.io/invocation/acca31b8-3a51-4a09-9359-cf5d78fde355)
+([outer remote invocation](https://app.buildbuddy.io/invocation/764c6545-276f-44f0-8571-0cee5422d9e1)),
+using plain `bb remote test //tests/crosscutting/upgrade-compat/... --config=nobug`.
+All upgrade and skew cases passed; no product findings were identified.
+Invocation comparisons exclude the asynchronously updated DB timestamp and
+normalize an absent versus empty response-enriched scorecard; stored events and
+all remaining returned metadata must match.
