@@ -33,3 +33,13 @@ Contracts consulted:
   BuildBuddy extension, so its cleanup expectations come from the pinned source.
 
 Run with `bb remote test //tests/executor/isolation-firecracker/... --config=nobug`.
+
+The regression tests replace inputs before modifying them (`rm input; ... >
+input`) to avoid corrupting a hardlinked cache entry. In-place mutation is
+covered separately by the failing `:input_mutation_bug_test` target, tagged
+`bug`; see
+[the finding](../../../findings/executor-isolation-firecracker-input-cache-poisoning.md).
+It verifies that the app CAS retains the correct bytes while a later,
+non-recycled action receives the mutated contents.
+
+Validation: [passing nobug suite](https://app.buildbuddy.io/invocation/044206c0-a62a-4c67-9cd4-db92020a22f7).
