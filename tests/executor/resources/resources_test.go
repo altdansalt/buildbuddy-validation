@@ -157,7 +157,7 @@ func TestWorkspaceDiskFullAndRecovery(t *testing.T) {
 	require.NotZero(t, r.ExitCode)
 	require.Contains(t, stderr, "No space left on device")
 	// Completion must remove the previous workspace and allow a fresh write.
-	r, out, _ := execute(t, c, `dd if=/dev/zero of=scratch bs=1048576 count=4 2>/dev/null && printf recovered`, nil)
+	r, out, _ := execute(t, c, `dd if=/dev/zero of=scratch bs=1048576 count=4 2>/dev/null && printf recovered`, map[string]string{"EstimatedFreeDiskBytes": "4MB"})
 	require.Zero(t, r.ExitCode)
 	require.Equal(t, "recovered", out)
 }
