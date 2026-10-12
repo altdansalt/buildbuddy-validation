@@ -1,0 +1,46 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "go_default_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "regression_test.go"],
+    tags = ["local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+    ],
+)
+
+go_test(
+    name = "missing_streams_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "missing_streams_test.go"],
+    tags = ["local", "requires-network", "bug"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+    ],
+)
+
+go_test(
+    name = "malformed_result_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "malformed_result_test.go"],
+    tags = ["local", "requires-network", "bug"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+    ],
+)
