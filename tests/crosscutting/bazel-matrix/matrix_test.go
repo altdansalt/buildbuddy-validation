@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,6 +29,28 @@ const rule = `def _impl(ctx):
     return [DefaultInfo(files = depset([out]))]
 matrix = rule(implementation = _impl, attrs = {"src": attr.label(allow_single_file = True)})
 `
+
+// Bazel deliberately makes output tree directories read-only. Register this
+// after TempDir so the LIFO cleanup restores permissions before Go removes it.
+func writableTemp(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	t.Cleanup(func() {
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return os.Chmod(path, 0755)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Errorf("restore temporary directory permissions: %v", err)
+		}
+	})
+	return root
+}
 
 func write(t *testing.T, path, data string) {
 	t.Helper()
@@ -76,22 +99,22 @@ func TestBazelMatrix(t *testing.T) {
 		{"9.0.0", "c44a93f25398c68f904fa1d19b61d321de6c0d2f09dca375d7bc0dc9b9428403"},
 	}
 	for _, v := range versions {
-		binary := download(t, t.TempDir(), v.version, v.hash)
+		binary := download(t, writableTemp(t), v.version, v.hash)
 		for _, mode := range []string{"cache", "execution"} {
 			t.Run(v.version+"/"+mode, func(t *testing.T) {
-				ws := t.TempDir()
+				ws := writableTemp(t)
 				write(t, filepath.Join(ws, "MODULE.bazel"), "module(name = \"matrix\")\n")
 				write(t, filepath.Join(ws, "WORKSPACE"), "")
 				write(t, filepath.Join(ws, "rules.bzl"), rule)
 				write(t, filepath.Join(ws, "BUILD.bazel"), "load(\":rules.bzl\", \"matrix\")\nmatrix(name = \"tree\", src = \"input\")\n")
 				initial := "initial " + v.version + " " + mode + "\n"
 				write(t, filepath.Join(ws, "input"), initial)
-				incrementalRoot := t.TempDir()
+				incrementalRoot := writableTemp(t)
 				run := func(phase string, remote bool, want string, hit bool) {
 					t.Helper()
 					root := incrementalRoot
 					if strings.Contains(phase, "hit") {
-						root = t.TempDir()
+						root = writableTemp(t)
 					}
 					args := []string{"--batch", "--output_user_root=" + root, "--host_jvm_args=-Xmx256m", "--ignore_all_rc_files", "build", "//:tree", "--jobs=2", "--enable_bzlmod", "--remote_timeout=60", "--remote_download_outputs=all", "--remote_header=x-buildbuddy-api-key=" + f.APIKey, "--remote_instance_name=matrix-" + v.version + "-" + mode, "--remote_cache=grpc://" + f.Endpoint(harness.CacheProxy).GRPC}
 					if !strings.HasPrefix(v.version, "7.") {
