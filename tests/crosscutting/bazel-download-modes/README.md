@@ -1,6 +1,6 @@
 # Bazel download modes
 
-This suite downloads the SHA256-verified Bazel 7.4.1 standalone Linux client
+This suite downloads the SHA256-verified Bazel 8.4.2 standalone Linux client
 inside the hosted runner. It builds two chained genrules against only the
 harness-local released app/executor, using bare-runner execution. It never uses
 the dispatch API key for component requests.
@@ -16,12 +16,16 @@ Coverage:
 - A second fresh output base verifies cache reuse and the same materialization
   policy; batch process exit provides the asynchronous upload completion barrier.
 - App and proxy reject AC entries with a missing output file, nested tree leaf,
-  or Tree message,
-  then serve the same entry after the bytes are restored. Action and Command
+  or Tree message, then serve the same entry after the bytes are restored. Action and Command
   protos are uploaded as required by REAPI. This constructs the post-eviction
   state; it does not exercise the Pebble eviction mechanism itself.
 - Execution bypasses a dangling cached result, regenerates missing bytes, and
   serves the repaired result as a cache hit on the next request.
+- An actual eviction test builds with minimal downloads, fills a private 8 MiB
+  Pebble cache with incompressible blobs, proves the output bytes return
+  `NOT_FOUND`, and switches the same Bazel output base to all downloads.
+  The app has zero minimum eviction age and a one-second sampler refresh;
+  these test-only settings make eviction practical without touching other caches.
 
 Contracts used:
 
@@ -33,3 +37,6 @@ Contracts used:
 
 Run with `GIT_CONFIG_GLOBAL=/dev/null bb remote test
 //tests/crosscutting/bazel-download-modes/... --config=nobug`.
+
+The root `bazel-*` ignore pattern matches this directory name. New files here
+need `git add -f` until the coordinator narrows that pattern to root outputs.

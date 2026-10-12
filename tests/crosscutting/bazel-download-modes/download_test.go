@@ -2,6 +2,7 @@ package downloadmodes_test
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func write(t *testing.T, path, contents string) {
@@ -30,7 +32,7 @@ func bazelClient(t *testing.T) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://releases.bazel.build/7.4.1/release/bazel-7.4.1-linux-x86_64", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://releases.bazel.build/8.4.2/release/bazel-8.4.2-linux-x86_64", nil)
 	require.NoError(t, err)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -38,10 +40,21 @@ func bazelClient(t *testing.T) string {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
 	require.NoError(t, err)
-	require.Equal(t, "c97f02133adce63f0c28678ac1f21d65fa8255c80429b588aeeba8a1fac6202b", fmt.Sprintf("%x", sha256.Sum256(b)))
+	require.Equal(t, "4dc8e99dfa802e252dac176d08201fd15c542ae78c448c8a89974b6f387c282c", fmt.Sprintf("%x", sha256.Sum256(b)))
 	path := filepath.Join(t.TempDir(), "bazel")
 	require.NoError(t, os.WriteFile(path, b, 0700))
 	return path
+}
+
+// Pass only ordinary process settings; no dispatch credentials enter Bazel.
+func clientEnv() []string {
+	var env []string
+	for _, name := range []string{"PATH", "HOME", "USER", "TMPDIR", "TEST_TMPDIR", "JAVA_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
+		if value, ok := os.LookupEnv(name); ok {
+			env = append(env, name+"="+value)
+		}
+	}
+	return env
 }
 
 func TestBazelDownloadModes(t *testing.T) {
@@ -63,7 +76,7 @@ genrule(name="final", srcs=[":intermediate"], outs=["final.txt"], cmd="cat $(loc
 		for _, disk := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/remote-exec=%t/disk=%t", mode, scenario.remote, disk), func(t *testing.T) {
 				base := t.TempDir()
-				args := []string{"--batch", "--output_base=" + base, "--ignore_all_rc_files", "build", "//:final", "--enable_bzlmod=false", "--jobs=2", "--remote_cache=grpc://" + f.Endpoint(harness.App).GRPC, "--remote_header=x-buildbuddy-api-key=" + f.APIKey, "--remote_download_outputs=" + mode, "--remote_cache_async", "--remote_instance_name=" + fmt.Sprintf("%s-%t-%t", mode, scenario.remote, disk), "--remote_timeout=60", "--remote_default_exec_properties=OSFamily=linux", "--remote_default_exec_properties=Arch=amd64", "--remote_default_exec_properties=workload-isolation-type=none"}
+				args := []string{"--batch", "--output_base=" + base, "--ignore_all_rc_files", "build", "//:final", "--enable_bzlmod=false", "--enable_workspace", "--incompatible_autoload_externally=", "--jobs=2", "--remote_cache=grpc://" + f.Endpoint(harness.App).GRPC, "--remote_header=x-buildbuddy-api-key=" + f.APIKey, "--remote_download_outputs=" + mode, "--remote_cache_async", "--remote_instance_name=" + fmt.Sprintf("%s-%t-%t", mode, scenario.remote, disk), "--remote_timeout=60", "--remote_default_exec_properties=OSFamily=linux", "--remote_default_exec_properties=Arch=amd64", "--remote_default_exec_properties=workload-isolation-type=none"}
 				if scenario.remote {
 					args = append(args, "--remote_executor=grpc://"+f.Endpoint(harness.App).GRPC)
 				}
@@ -75,12 +88,7 @@ genrule(name="final", srcs=[":intermediate"], outs=["final.txt"], cmd="cat $(loc
 					defer cancel()
 					cmd := exec.CommandContext(ctx, bin, args...)
 					cmd.Dir = workspace
-					// Do not expose the dispatch credential to the nested client.
-					for _, e := range os.Environ() {
-						if !strings.HasPrefix(e, "BUILDBUDDY_API_KEY=") {
-							cmd.Env = append(cmd.Env, e)
-						}
-					}
+					cmd.Env = clientEnv()
 					out, err := cmd.CombinedOutput()
 					require.NoError(t, err, "%s", out)
 					return string(out)
@@ -124,7 +132,7 @@ func TestActionCacheMissingOutputBytes(t *testing.T) {
 			t.Run(string(component)+"/"+kind, func(t *testing.T) {
 				c := f.Clients(component)
 				instance := "missing-output-" + string(component) + "-" + kind
-				command, err := c.UploadProto(ctx, instance, &repb.Command{Arguments: []string{"/bin/sh", "-c", "printf output"}})
+				command, err := c.UploadProto(ctx, instance, &repb.Command{Arguments: []string{"/bin/sh", "-c", "printf output > out"}, OutputPaths: []string{"out"}})
 				require.NoError(t, err)
 				root, err := c.UploadProto(ctx, instance, &repb.Directory{})
 				require.NoError(t, err)
@@ -159,8 +167,7 @@ func TestActionCacheMissingOutputBytes(t *testing.T) {
 				require.NoError(t, err)
 				restored, err := c.AC.GetActionResult(ctx, &repb.GetActionResultRequest{InstanceName: instance, ActionDigest: action})
 				require.NoError(t, err)
-				require.Equal(t, result.OutputFiles, restored.OutputFiles)
-				require.Equal(t, result.OutputDirectories, restored.OutputDirectories)
+				require.True(t, proto.Equal(result, &repb.ActionResult{OutputFiles: restored.OutputFiles, OutputDirectories: restored.OutputDirectories}))
 				b, err := c.Read(ctx, instance, missing)
 				require.NoError(t, err)
 				require.Equal(t, missingBytes, b)
@@ -211,9 +218,75 @@ func TestExecutionRecoversMissingCachedOutput(t *testing.T) {
 		require.Zero(t, response.GetResult().GetExitCode())
 		require.Equal(t, cached, response.CachedResult, "first execution must rebuild; second must reuse restored bytes")
 		require.Len(t, response.Result.OutputFiles, 1)
-		require.Equal(t, output, response.Result.OutputFiles[0].Digest)
+		require.True(t, proto.Equal(output, response.Result.OutputFiles[0].Digest))
 		b, err := c.Read(ctx, instance, output)
 		require.NoError(t, err)
 		require.Equal(t, payload, b)
 	}
+}
+
+// Exercise Bazel's persisted BWoB metadata against actual Pebble eviction,
+// rather than just testing an artificially dangling action-cache entry.
+func TestBazelMinimalRecoversAfterEviction(t *testing.T) {
+	bin := bazelClient(t)
+	f := harness.Start(t, harness.Options{
+		Components: []harness.Component{harness.App, harness.Executor},
+		Config: map[harness.Component]harness.Config{
+			harness.App: {"cache": harness.Config{"max_size_bytes": int64(8 << 20), "pebble": harness.Config{"min_eviction_age": "0s", "atime_update_threshold": "0s", "sampler_iter_refresh_peroid": "1s", "presence_cache": harness.Config{"max_entries": 0}}}},
+		},
+	})
+	workspace, base := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(workspace, "WORKSPACE"), "workspace(name = \"eviction\")\n")
+	write(t, filepath.Join(workspace, "BUILD"), `genrule(name="out", outs=["out.txt"], cmd="printf 'eviction-payload\\n' > $@")`)
+	args := []string{"--batch", "--output_base=" + base, "--ignore_all_rc_files", "build", "//:out", "--enable_bzlmod=false", "--enable_workspace", "--incompatible_autoload_externally=", "--jobs=2", "--remote_cache=grpc://" + f.Endpoint(harness.App).GRPC, "--remote_executor=grpc://" + f.Endpoint(harness.App).GRPC, "--remote_header=x-buildbuddy-api-key=" + f.APIKey, "--remote_instance_name=eviction", "--remote_timeout=60", "--remote_default_exec_properties=OSFamily=linux", "--remote_default_exec_properties=Arch=amd64", "--remote_default_exec_properties=workload-isolation-type=none"}
+	run := func(mode string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, bin, append(args, "--remote_download_outputs="+mode)...)
+		cmd.Dir = workspace
+		cmd.Env = clientEnv()
+		b, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", b)
+		t.Log(string(b))
+	}
+	run("minimal")
+	localOutput := filepath.Join(base, "execroot", "eviction", "bazel-out", "k8-fastbuild", "bin", "out.txt")
+	_, err := os.Stat(localOutput)
+	require.True(t, os.IsNotExist(err), "minimal build must retain only output metadata")
+	c := f.Clients(harness.App)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	payload := []byte("eviction-payload\n")
+	digest := harness.Digest(payload)
+	b, err := c.Read(ctx, "eviction", digest)
+	require.NoError(t, err)
+	require.Equal(t, payload, b)
+	// Incompressible blobs exceed the private cache capacity. A bounded poll
+	// proves eviction actually occurred before testing client recovery.
+	evicted := false
+	for round := 0; round < 10; round++ {
+		for i := 0; i < 16; i++ {
+			churn := make([]byte, 1<<20)
+			_, err := rand.Read(churn)
+			require.NoError(t, err)
+			_, err = c.Upload(ctx, "eviction", churn)
+			require.NoError(t, err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(2 * time.Second):
+		}
+		_, err = c.Read(ctx, "eviction", digest)
+		if status.Code(err) == codes.NotFound {
+			evicted = true
+			break
+		}
+		require.NoError(t, err)
+	}
+	require.True(t, evicted, "test setup failed to evict the original output")
+	run("all")
+	b, err = os.ReadFile(localOutput)
+	require.NoError(t, err)
+	require.Equal(t, payload, b, "Bazel must regenerate and download output after CAS eviction")
 }
