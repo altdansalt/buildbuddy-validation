@@ -4,5 +4,4 @@
 
 | Finding | Components | Severity | Status | Repro target |
 | --- | --- | --- | --- | --- |
-
-No findings recorded.
+| [Malformed input tree with a file/directory name collision returns UNKNOWN instead of INVALID_ARGUMENT](executor-input-tree-name-collision-status.md) | executor | low | unverified | `//tests/executor/input-tree:file_directory_collision_test` |
