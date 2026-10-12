@@ -73,7 +73,7 @@ func TestColdWarmAndPartialReads(t *testing.T) {
 			if tc.limit > 0 && tc.offset+tc.limit < end {
 				end = tc.offset + tc.limit
 			}
-			require.Equal(t, payload[tc.offset:end], got)
+			require.True(t, bytes.Equal(payload[tc.offset:end], got), "range bytes differ")
 			// A partial fetch must never publish a truncated blob under the full digest.
 			cached, err := proxy.Read(local(ctx), instance, d)
 			if err == nil {
@@ -89,7 +89,7 @@ func TestColdWarmAndPartialReads(t *testing.T) {
 			require.Equal(t, payload, got)
 			got, err = read(ctx, proxy, d, tc.offset, tc.limit, false)
 			require.NoError(t, err)
-			require.Equal(t, payload[tc.offset:end], got)
+			require.True(t, bytes.Equal(payload[tc.offset:end], got), "range bytes differ")
 		})
 	}
 }
