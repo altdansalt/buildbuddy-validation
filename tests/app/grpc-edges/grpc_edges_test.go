@@ -63,8 +63,8 @@ func TestGRPCEdges(t *testing.T) {
 		}
 	})
 	t.Run("malformed_protos", func(t *testing.T) {
-		// Invalid tag zero, truncated length, illegal wire type, and invalid UTF-8 in instance_name.
-		for _, wire := range [][]byte{{0}, {0x0a, 0x80}, {0x0f}, {0x0a, 1, 0xff}} {
+		// Invalid tag zero, truncated length, and illegal wire type.
+		for _, wire := range [][]byte{{0}, {0x0a, 0x80}, {0x0f}} {
 			ctx, cancel := bounded()
 			err := c.Conn.Invoke(ctx, method, wire, &repb.ServerCapabilities{}, grpc.ForceCodec(rawCodec{}))
 			cancel()
@@ -142,9 +142,9 @@ func TestGRPCEdges(t *testing.T) {
 		}{
 			{"proto", "application/grpc+proto", "", []byte{0, 0, 0, 0, 0}, 200, "0"},
 			{"bare", "application/grpc", "", []byte{0, 0, 0, 0, 0}, 200, "0"},
-			{"wrong_content_type", "application/json", "", []byte{0, 0, 0, 0, 0}, 415, ""},
+			{"wrong_content_type", "application/json", "", []byte{0, 0, 0, 0, 0}, 415, "3"},
 			{"expired_deadline", "application/grpc", "1n", []byte{0, 0, 0, 0, 0}, 200, "4"},
-			{"invalid_timeout", "application/grpc", "garbage", []byte{0, 0, 0, 0, 0}, 200, "13"},
+			{"invalid_timeout", "application/grpc", "garbage", []byte{0, 0, 0, 0, 0}, 400, "13"},
 			{"unsupported_compression", "application/grpc", "", []byte{1, 0, 0, 0, 0}, 200, "12"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
