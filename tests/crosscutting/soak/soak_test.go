@@ -52,7 +52,7 @@ func TestMixedLoadStability(t *testing.T) {
 	require.NoError(t, err)
 	root, err := app.UploadProto(ctx, instance, &repb.Directory{Files: []*repb.FileNode{{Name: "input", Digest: d}}})
 	require.NoError(t, err)
-	cmd, err := app.UploadProto(ctx, instance, &repb.Command{Arguments: []string{"/bin/sh", "-c", "cat input > output"}, OutputPaths: []string{"output"}, Platform: &repb.Platform{Properties: []*repb.Platform_Property{{Name: "OSFamily", Value: "linux"}, {Name: "Arch", Value: "amd64"}, {Name: "workload-isolation-type", Value: "none"}}}})
+	cmd, err := app.UploadProto(ctx, instance, &repb.Command{Arguments: []string{"/bin/sh", "-c", "dd if=/dev/zero of=scratch bs=1048576 count=4 2>/dev/null && cat input > output"}, OutputPaths: []string{"output"}, Platform: &repb.Platform{Properties: []*repb.Platform_Property{{Name: "OSFamily", Value: "linux"}, {Name: "Arch", Value: "amd64"}, {Name: "workload-isolation-type", Value: "none"}}}})
 	require.NoError(t, err)
 	action, err := app.UploadProto(ctx, instance, &repb.Action{CommandDigest: cmd, InputRootDigest: root, Timeout: durationpb.New(30 * time.Second), DoNotCache: true})
 	require.NoError(t, err)
@@ -174,6 +174,17 @@ func TestMixedLoadStability(t *testing.T) {
 		for _, c := range components {
 			values, e := metrics(client, endpoints[c])
 			require.NoError(t, e)
+			disk, diskErr := docker("exec", f.Endpoint(c).Container, "du", "-sk", "/data")
+			if diskErr == nil {
+				fields := strings.Fields(string(disk))
+				if len(fields) > 0 {
+					if kb, err := strconv.ParseFloat(fields[0], 64); err == nil {
+						values["data_directory_bytes"] = kb * 1024
+					}
+				}
+			} else if minute == 0 {
+				t.Logf("%s du unavailable: %v %s; disk metric coverage only", c, diskErr, disk)
+			}
 			samples = append(samples, sample{minute, c, values})
 			t.Logf("minute=%d component=%s resources=%v", minute, c, values)
 		}
@@ -197,7 +208,7 @@ func TestMixedLoadStability(t *testing.T) {
 	require.Empty(t, failures, "mixed load RPC/data errors")
 	for _, c := range components {
 		base, last := samples[2*len(components)+index(components, c)].Values, samples[10*len(components)+index(components, c)].Values
-		for metric, allowance := range map[string]float64{"go_goroutines": 150, "process_open_fds": 128, "go_memstats_heap_alloc_bytes": 256 << 20, "process_resident_memory_bytes": 384 << 20, "buildbuddy_remote_execution_runner_pool_disk_usage_bytes": 256 << 20, "buildbuddy_remote_cache_pebble_cache_pebble_level_size_bytes": 256 << 20} {
+		for metric, allowance := range map[string]float64{"data_directory_bytes": 256 << 20, "go_goroutines": 150, "process_open_fds": 128, "go_memstats_heap_alloc_bytes": 256 << 20, "process_resident_memory_bytes": 384 << 20, "buildbuddy_remote_execution_runner_pool_disk_usage_bytes": 256 << 20, "buildbuddy_remote_cache_pebble_cache_pebble_level_size_bytes": 256 << 20} {
 			if b, ok := base[metric]; ok {
 				require.LessOrEqual(t, last[metric], b+allowance, "%s %s grew beyond conservative steady-state budget", c, metric)
 			}
