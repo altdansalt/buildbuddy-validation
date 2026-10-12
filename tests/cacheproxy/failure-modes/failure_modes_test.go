@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -61,6 +62,18 @@ func read(t *testing.T, c *harness.Clients, data []byte) {
 	require.Equal(t, data, got)
 }
 
+// Docker may reallocate randomly published ports when the same container starts.
+func refreshPorts(t *testing.T, dkr func(...string) string, ep *harness.Endpoint) {
+	t.Helper()
+	var ports map[string][]struct{ HostIP, HostPort string }
+	require.NoError(t, json.Unmarshal([]byte(dkr("inspect", "--format", "{{json .NetworkSettings.Ports}}", ep.Container)), &ports))
+	require.Len(t, ports["8080/tcp"], 1)
+	require.Len(t, ports["1985/tcp"], 1)
+	ep.HTTP = "http://127.0.0.1:" + ports["8080/tcp"][0].HostPort
+	ep.GRPC = "127.0.0.1:" + ports["1985/tcp"][0].HostPort
+	t.Logf("restart ports: HTTP=%s gRPC=%s", ep.HTTP, ep.GRPC)
+}
+
 func ready(t *testing.T, ep *harness.Endpoint) {
 	t.Helper()
 	client := &http.Client{Timeout: time.Second}
@@ -101,6 +114,8 @@ func TestBackendFaultsAndRecovery(t *testing.T) {
 					dkr("unpause", backend)
 				case "stop":
 					dkr("start", backend)
+					refreshPorts(t, dkr, f.Endpoint(harness.App))
+					app = f.Clients(harness.App)
 				case "disconnect":
 					dkr("network", "connect", "--alias", "app", f.Network, backend)
 				}
@@ -164,6 +179,7 @@ func TestProxyRestartPersistsLocalCAS(t *testing.T) {
 	// Abrupt restart checks committed data survives without a graceful cache flush.
 	dkr("kill", "--signal", "KILL", f.Endpoint(harness.CacheProxy).Container)
 	dkr("start", f.Endpoint(harness.CacheProxy).Container)
+	refreshPorts(t, dkr, f.Endpoint(harness.CacheProxy))
 	ready(t, f.Endpoint(harness.CacheProxy))
 	proxy = f.Clients(harness.CacheProxy)
 	local := metadata.AppendToOutgoingContext(ctx, "proxy_skip_remote", "true")
