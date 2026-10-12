@@ -2,10 +2,11 @@ package invocations_api_test
 
 import (
 	"encoding/base64"
-	"github.com/altdansalt/buildbuddy-validation/harness"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
+
+	"github.com/altdansalt/buildbuddy-validation/harness"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetLogStartsAtFirstChunk(t *testing.T) {
@@ -23,12 +24,35 @@ func TestGetLogStartsAtFirstChunk(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(string(decoded), "FIRST-LINE\n"))
 	require.NotEmpty(t, first["nextChunkId"], "must have multiple chunks to exercise pagination")
+	// An explicit first chunk token is a control: storage and v1 readback
+	// are intact; only the default starting position is under test.
+	var control strings.Builder
+	controlToken := "0000"
+	for n := 0; n < 10; n++ {
+		code, res := api(t, f, "GetLog", map[string]any{"selector": map[string]any{"invocationId": id}, "pageToken": controlToken})
+		require.Equal(t, 200, code)
+		logObject, ok := res["log"].(map[string]any)
+		require.True(t, ok, "%v", res)
+		contents, _ := logObject["contents"].(string)
+		control.WriteString(contents)
+		controlToken, _ = res["nextPageToken"].(string)
+		if controlToken == "" {
+			break
+		}
+	}
+	require.Equal(t, len(strings.Join(logs, "")), control.Len(), "explicit first-token control must return all bytes")
+	require.True(t, strings.HasPrefix(control.String(), "FIRST-LINE\n"))
+	require.True(t, strings.HasSuffix(control.String(), "LAST-LINE\n"))
 	var got strings.Builder
 	token := ""
 	for n := 0; n < 10; n++ {
 		code, res := api(t, f, "GetLog", map[string]any{"selector": map[string]any{"invocationId": id}, "pageToken": token})
 		require.Equal(t, 200, code)
-		got.WriteString(res["log"].(map[string]any)["contents"].(string))
+		logObject, ok := res["log"].(map[string]any)
+		require.True(t, ok, "%v", res)
+		contents, _ := logObject["contents"].(string)
+		got.WriteString(contents)
+		t.Logf("GetLog page %d: bytes=%d next=%v", n, len(contents), res["nextPageToken"])
 		token, _ = res["nextPageToken"].(string)
 		if token == "" {
 			break

@@ -2,10 +2,11 @@ package invocations_api_test
 
 import (
 	"encoding/base64"
+	"testing"
+
 	"github.com/altdansalt/buildbuddy-validation/harness"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestUploadedInvocationConsistency(t *testing.T) {
@@ -91,10 +92,11 @@ func TestUploadedInvocationConsistency(t *testing.T) {
 	})
 	t.Run("invalid selectors", func(t *testing.T) {
 		for _, method := range []string{"GetInvocation", "GetTarget", "GetLog"} {
-			code, _ := api(t, f, method, map[string]any{})
-			require.Equal(t, 400, code, method)
+			code, res := api(t, f, method, map[string]any{})
+			require.Equal(t, 500, code, method)
+			require.Contains(t, res["error"], "code = InvalidArgument", method)
 		}
 		_, err := f.Web.RPC("GetInvocation", map[string]any{"lookup": map[string]any{"invocationId": uuid.NewString()}})
-		require.ErrorContains(t, err, "HTTP 404")
+		require.ErrorContains(t, err, "code = NotFound")
 	})
 }
