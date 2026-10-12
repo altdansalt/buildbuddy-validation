@@ -19,7 +19,22 @@ go_test(
     size = "large",
     timeout = "long",
     srcs = ["bytestream_test.go", "offset_test.go"],
-    args = ["-test.run=^TestReadBeyondEOF$" ],
+    args = ["-test.run=^TestReadBeyondEOF$$" ],
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_golang_google_genproto_googleapis_bytestream//:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+    ],
+)
+go_test(
+    name = "completed_write_status",
+    size = "large",
+    timeout = "long",
+    srcs = ["bytestream_test.go", "status_test.go"],
+    args = ["-test.run=^TestCompletedWriteStatus$$" ],
     tags = ["bug", "local", "requires-network"],
     deps = [
         "//harness:go_default_library",

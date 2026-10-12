@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +22,27 @@ import (
 func fixture(t *testing.T) (*harness.Clients, *harness.Clients, context.Context) {
 	t.Helper()
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}})
+	// Preserve and inspect fixture-local logs, including recovered server panics.
+	t.Cleanup(func() {
+		f.Close()
+		paths, err := filepath.Glob(filepath.Join(f.OutputDir, "*.logs.txt"))
+		require.NoError(t, err)
+		for _, path := range paths {
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			lines := strings.Split(string(data), "\n")
+			for i, line := range lines {
+				if strings.Contains(strings.ToLower(line), "panic") {
+					end := i + 25
+					if end > len(lines) {
+						end = len(lines)
+					}
+					t.Errorf("container panic in %s:\n%s", filepath.Base(path), strings.Join(lines[i:end], "\n"))
+					break
+				}
+			}
+		}
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
 	return f.Clients(harness.CacheProxy), f.Clients(harness.App), ctx
@@ -68,6 +92,11 @@ func TestReadRanges(t *testing.T) {
 				end = tc.offset + tc.limit
 			}
 			for pass := 0; pass < 2; pass++ {
+				if pass == 1 {
+					full, err := proxy.Read(ctx, instance, d)
+					require.NoError(t, err)
+					require.True(t, bytes.Equal(blob, full))
+				}
 				got, err := read(ctx, proxy, name, tc.offset, tc.limit)
 				require.NoError(t, err)
 				require.True(t, bytes.Equal(blob[tc.offset:end], got), "pass %d: expected %d bytes, got %d", pass, end-tc.offset, len(got))

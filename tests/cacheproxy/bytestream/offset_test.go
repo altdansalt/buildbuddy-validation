@@ -10,18 +10,27 @@ import (
 
 func TestReadBeyondEOF(t *testing.T) {
 	proxy, app, ctx := fixture(t)
-	for _, warm := range []bool{false, true} {
-		data := []byte("offset must not exceed the resource size")
-		if warm {
-			data = append(data, '!')
-		}
-		d, err := app.Write(ctx, "beyond-eof", data, false)
-		require.NoError(t, err)
-		if warm {
-			_, err = proxy.Read(ctx, "beyond-eof", d)
+	for _, state := range []string{"cold", "warm"} {
+		t.Run(state, func(t *testing.T) {
+			data := []byte("offset must not exceed the resource size: " + state)
+			d, err := app.Write(ctx, "beyond-eof", data, false)
 			require.NoError(t, err)
-		}
-		got, err := read(ctx, proxy, harness.ResourceName("beyond-eof", d, false), int64(len(data))+1, 0)
-		require.Equal(t, codes.OutOfRange, status.Code(err), "warm=%t got=%d bytes err=%v", warm, len(got), err)
+			name := harness.ResourceName("beyond-eof", d, false)
+			if state == "warm" {
+				got, err := proxy.Read(ctx, "beyond-eof", d)
+				require.NoError(t, err)
+				require.Equal(t, data, got)
+			}
+			for label, c := range map[string]*harness.Clients{"proxy": proxy, "app": app} {
+				t.Run(label, func(t *testing.T) {
+					got, err := read(ctx, c, name, int64(len(data))+1, 0)
+					require.Equal(t, codes.OutOfRange, status.Code(err), "got=%d bytes err=%v", len(got), err)
+				})
+			}
+			// Recovery after the malformed request must preserve the blob.
+			got, err := proxy.Read(ctx, "beyond-eof", d)
+			require.NoError(t, err)
+			require.Equal(t, data, got)
+		})
 	}
 }
