@@ -31,3 +31,7 @@ Contract references:
 The test is intentionally a sequential state-transition check. Cancellation,
 concurrent action merging, directory/symlink outputs and container restarts are
 follow-up coverage.
+
+Validation on the pinned release: [passing hosted invocation](https://app.buildbuddy.io/invocation/f909d8fb-dfab-46c6-88f5-7529205cef7b)
+([outer runner](https://app.buildbuddy.io/invocation/1192354f-acb0-4b86-8caa-1112dcbf4def)).
+All six cases passed; no product finding was observed.
