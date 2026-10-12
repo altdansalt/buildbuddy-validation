@@ -4,7 +4,7 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["auth_test.go"],
+    srcs = ["auth_test.go", "executor_assignment_test.go"],
     tags = ["local", "requires-network"],
     deps = [
         "//harness:go_default_library",
