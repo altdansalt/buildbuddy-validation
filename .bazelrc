@@ -1,0 +1,11 @@
+# Run tests in the hosted runner's Docker-capable VM, outside Bazel sandboxes.
+# Do not add cloud cache/execution endpoints here: fixture RPCs must stay local.
+build --spawn_strategy=local
+build --strategy=TestRunner=local
+test --test_output=errors
+test --test_timeout=600
+# The ordinary suite is green; reproductions are run explicitly without nobug.
+test --config=nobug
+test:nobug --test_tag_filters=-bug
+# Bound simultaneous fixture memory use on the standard hosted runner.
+test --local_test_jobs=2

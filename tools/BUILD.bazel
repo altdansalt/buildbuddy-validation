@@ -1,0 +1,18 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+sh_test(
+    name = "runner_probe",
+    srcs = ["runner_probe.sh"],
+    tags = [
+        "local",
+        "manual",
+        "requires-network",
+    ],
+)
+
+sh_binary(
+    name = "findings_index",
+    srcs = ["findings_index.py"],
+    data = ["//findings:files"],
+)
