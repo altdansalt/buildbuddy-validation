@@ -27,7 +27,7 @@ func TestOutputCollection(t *testing.T) {
 		require.Empty(t, r.read(t, files["empty"].Digest))
 		require.False(t, files["empty"].IsExecutable)
 		// With no requested node properties, mtime must not affect the content digest.
-		require.Equal(t, harness.Digest([]byte("content")), files["executable"].Digest)
+		require.True(t, proto.Equal(harness.Digest([]byte("content")), files["executable"].Digest))
 	})
 	t.Run("empty-and-missing-modern-directories", func(t *testing.T) {
 		cmd := shell("mkdir emptydir; test ! -e missingdir")

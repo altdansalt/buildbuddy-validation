@@ -25,5 +25,6 @@ Run passing coverage with:
 bb remote test //tests/executor/outputs/... --config=nobug
 ```
 
-Candidate bug targets use separate test binaries so failures do not hide passing
-coverage. Run explicitly with `--test_tag_filters=bug --nocache_test_results`.
+Bug targets use separate test binaries so failures do not hide passing
+coverage. Three findings in findings/executor-outputs-*.md document two reproduction
+runs each, with status unverified for maintainer review. Run explicitly with `--test_tag_filters=bug --nocache_test_results`.

@@ -9,6 +9,7 @@ import (
 	"github.com/altdansalt/buildbuddy-validation/harness"
 	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -73,6 +74,6 @@ func (r runner) read(t *testing.T, d *repb.Digest) []byte {
 	require.NotNil(t, d)
 	b, err := r.c.Read(r.ctx, instance, d)
 	require.NoError(t, err)
-	require.Equal(t, harness.Digest(b), d)
+	require.True(t, proto.Equal(harness.Digest(b), d), "CAS content digest mismatch: got %s, want %s", harness.Digest(b), d)
 	return b
 }

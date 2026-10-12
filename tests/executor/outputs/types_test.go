@@ -12,9 +12,9 @@ func TestLegacyOutputTypeMismatch(t *testing.T) {
 		directory    bool
 	}{
 		{"directory-as-file", "mkdir wrong", false},
-		{"file-as-directory", "rmdir wrong; printf file > wrong", true},
+		{"file-as-directory", "rm -rf wrong; printf file > wrong", true},
 		{"directory-symlink-as-file", "mkdir target; ln -s target wrong", false},
-		{"file-symlink-as-directory", "rmdir wrong; printf file > target; ln -s target wrong", true},
+		{"file-symlink-as-directory", "rm -rf wrong; printf file > target; ln -s target wrong", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := shell(tc.script)
