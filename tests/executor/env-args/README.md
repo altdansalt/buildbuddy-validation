@@ -8,7 +8,7 @@ for Go panic/fatal-error signatures after cleanup.
 `regression_test` covers argument ordering, duplicates, empty strings, whitespace,
 quotes, newlines, Unicode, sorted environment names, empty values, embedded `=`,
 duplicate environment names, a 64 KiB environment value, 2,000 arguments, a
-60 KiB individual argument, concurrent action-local environments, relative
+60,000-byte individual argument, concurrent action-local environments, relative
 executables, and working-directory rejection/recovery. Duplicate environment
 precedence is implementation regression coverage: REAPI does not prescribe
 which duplicate wins. Environment names supplied by valid coverage are sorted.
