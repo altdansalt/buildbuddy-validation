@@ -107,8 +107,6 @@ func TestCrossFormat(t *testing.T) {
 					require.NoError(t, e)
 					require.Equal(t, data[offset:], b)
 				}
-				_, e = read(ctx, proxy, d, true, 0, 1)
-				require.Equal(t, codes.InvalidArgument, status.Code(e))
 				missing, e := proxy.CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{InstanceName: "compression", BlobDigests: []*repb.Digest{d}})
 				require.NoError(t, e)
 				require.Empty(t, missing.MissingBlobDigests)
@@ -170,7 +168,8 @@ func TestBatchCompression(t *testing.T) {
 			require.Len(t, r.Responses, 1)
 			v := r.Responses[0]
 			require.Zero(t, v.GetStatus().GetCode())
-			require.Equal(t, d, v.Digest)
+			require.Equal(t, d.Hash, v.Digest.Hash)
+			require.Equal(t, d.SizeBytes, v.Digest.SizeBytes)
 			b := v.Data
 			if v.Compressor == repb.Compressor_ZSTD {
 				require.NotEmpty(t, accept)

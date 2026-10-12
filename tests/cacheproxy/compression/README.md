@@ -19,6 +19,13 @@ and the released source:
 - [Pebble representation conversion](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/backends/pebble_cache/pebble_cache.go)
 
 Run with `bb remote test //tests/cacheproxy/compression/... --config=nobug`.
+The nonzero compressed read limit reproducer is separately tagged `bug`:
+
+```sh
+bb remote test //tests/cacheproxy/compression:compressed_read_limit_bug_test \
+  --test_tag_filters=bug --nocache_test_results
+```
+
 Malformed zstd frames must fail and remain absent; their exact status is not
 asserted because the REAPI digest-mismatch rule does not specify decoding-error
 status. Valid zstd with a mismatched hash or uncompressed size must return
