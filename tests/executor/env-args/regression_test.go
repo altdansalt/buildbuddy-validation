@@ -45,7 +45,11 @@ func TestWorkingDirectory(t *testing.T) {
 	for _, wd := range []string{"missing", "../", "tools/../../", "/tmp", "tools/envargs-tool"} {
 		t.Run(wd, func(t *testing.T) {
 			r := execute(t, c, root, &repb.Command{Arguments: []string{"/bin/sh", "-c", "printf should-not-run"}, WorkingDirectory: wd})
-			require.EqualValues(t, 9, r.GetStatus().GetCode(), "invalid working directory must be rejected before execution")
+			expectedCode := int32(9) // Missing input-tree directory: FAILED_PRECONDITION.
+			if strings.HasPrefix(wd, "/") || strings.Contains(wd, "..") {
+				expectedCode = 3
+			} // Invalid path: INVALID_ARGUMENT.
+			require.Equal(t, expectedCode, r.GetStatus().GetCode(), "invalid working directory must be rejected before execution")
 		})
 	}
 	// A rejected action must not poison the executor for subsequent requests.

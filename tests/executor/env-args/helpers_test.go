@@ -9,6 +9,7 @@ import (
 	"github.com/altdansalt/buildbuddy-validation/harness"
 	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -37,15 +38,21 @@ func execute(t *testing.T, c *harness.Clients, root *repb.Digest, cmd *repb.Comm
 	ad, err := c.UploadProto(ctx, instance, &repb.Action{CommandDigest: cd, InputRootDigest: root, Timeout: durationpb.New(20 * time.Second), DoNotCache: true})
 	require.NoError(t, err)
 	s, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: instance, ActionDigest: ad, SkipCacheLookup: true, DigestFunction: repb.DigestFunction_SHA256})
-	require.NoError(t, err)
+	if err != nil {
+		return &repb.ExecuteResponse{Status: status.Convert(err).Proto()}
+	}
 	for {
 		op, err := s.Recv()
 		require.NotEqual(t, io.EOF, err, "execution ended without result")
-		require.NoError(t, err)
+		if err != nil {
+			return &repb.ExecuteResponse{Status: status.Convert(err).Proto()}
+		}
 		if !op.Done {
 			continue
 		}
-		require.Nil(t, op.GetError())
+		if op.GetError() != nil {
+			return &repb.ExecuteResponse{Status: op.GetError()}
+		}
 		r := &repb.ExecuteResponse{}
 		require.NoError(t, op.GetResponse().UnmarshalTo(r))
 		t.Logf("execution status=%v exit=%d", r.GetStatus(), r.GetResult().GetExitCode())
