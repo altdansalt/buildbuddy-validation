@@ -45,3 +45,23 @@ go_test(
     tags = ["bug", "local", "requires-network"],
     deps = DEPS,
 )
+
+go_test(
+    name = "randomized_test",
+    srcs = ["bytestream_test.go", "randomized_test.go"],
+    size = "large",
+    timeout = "long",
+    args = ["-test.run=TestRandomizedByteStream"],
+    tags = ["local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "compressed_limit_bug_test",
+    srcs = ["bytestream_test.go", "compressed_limit_bug_test.go"],
+    size = "large",
+    timeout = "long",
+    args = ["-test.run=TestCompressedReadLimit"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
