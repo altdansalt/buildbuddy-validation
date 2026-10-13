@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -21,6 +22,12 @@ const actionImage = "mirror.gcr.io/library/alpine@sha256:ce64758a109eb420d874a11
 // worker's containers. Register daemon cleanup before the fixture so it runs last.
 func fixture(t *testing.T) *harness.Fixture {
 	t.Helper()
+	// Match the harness startup lock: independent daemons share kernel rules.
+	lock, err := os.OpenFile(filepath.Join(os.TempDir(), "bbval-dockerd-start.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	require.NoError(t, err)
+	defer lock.Close()
+	require.NoError(t, syscall.Flock(int(lock.Fd()), syscall.LOCK_EX))
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	dir, err := os.MkdirTemp("", "bbval-isolation-")
 	require.NoError(t, err)
 	socket := filepath.Join(dir, "docker.sock")
@@ -33,7 +40,7 @@ func fixture(t *testing.T) *harness.Fixture {
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "sudo", "-n", "dockerd", "--host=unix://"+socket,
 		"--data-root="+filepath.Join(dir, "docker"), "--exec-root="+filepath.Join(dir, "exec"),
-		"--pidfile="+filepath.Join(dir, "pid"), "--bridge=none", "--iptables=false", "--ip-masq=false", "--default-address-pool=base="+poolCIDR+",size=28")
+		"--pidfile="+filepath.Join(dir, "pid"), "--bridge=none", "--default-address-pool=base="+poolCIDR+",size=28")
 	cmd.Stdout = log
 	cmd.Stderr = log
 	require.NoError(t, cmd.Start())

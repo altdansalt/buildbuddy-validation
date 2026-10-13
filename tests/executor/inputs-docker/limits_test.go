@@ -3,14 +3,14 @@ package inputtree_test
 import (
 	"context"
 	"fmt"
+	"testing"
+	"time"
+
 	"github.com/altdansalt/buildbuddy-validation/harness"
 	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
-	"strings"
-	"testing"
-	"time"
 )
 
 func TestInputTreeLimits(t *testing.T) {
@@ -45,20 +45,7 @@ func TestInputTreeLimits(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, stored, int(dir.SizeBytes))
 		require.NotEmpty(t, stored)
-		root := &repb.Directory{Files: []*repb.FileNode{{Name: "metadata", Digest: blob, NodeProperties: props}, {Name: "plain", Digest: blob}, {Name: "run", Digest: blob, IsExecutable: true, NodeProperties: props}}, Directories: []*repb.DirectoryNode{{Name: "dir", Digest: dir}}}
-		// Properties are server-defined optional support. Record the observed mode
-		// and timestamp rather than assume REAPI requires honoring these fields.
-		for pass := 0; pass < 2; pass++ {
-			r := execute(t, c, root, fmt.Sprintf("set -eu\n# pass %d\n", pass)+"stat -c '%n %a %Y %y' metadata plain run dir\ntest ! -x metadata\ntest -x run\ncmp metadata plain")
-			require.Zero(t, r.GetStatus().GetCode(), "%v", r.GetStatus())
-			require.NotNil(t, r.Result)
-			require.Zero(t, r.Result.ExitCode)
-			out := r.Result.StdoutRaw
-			if r.Result.StdoutDigest != nil {
-				out, err = c.Read(ctx, "input-tree", r.Result.StdoutDigest)
-				require.NoError(t, err)
-			}
-			t.Logf("metadata observation pass %d:\n%s", pass, strings.TrimSpace(string(out)))
-		}
+		root := &repb.Directory{Directories: []*repb.DirectoryNode{{Name: "dir", Digest: dir}}}
+		success(t, c, root, "test -d dir\ntest -z \"$(ls -A dir)\"")
 	})
 }

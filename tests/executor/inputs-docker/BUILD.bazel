@@ -4,7 +4,14 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["fixture_test.go", "helpers_test.go", "input_tree_test.go", "round2_test.go", "collision_test.go", "random_test.go"],
+    srcs = [
+        "collision_test.go",
+        "fixture_test.go",
+        "helpers_test.go",
+        "input_tree_test.go",
+        "random_test.go",
+        "round2_test.go",
+    ],
     tags = [
         "local",
         "requires-network",
@@ -25,7 +32,8 @@ go_test(
     size = "large",
     timeout = "long",
     srcs = ["fixture_test.go", "helpers_test.go", "limits_test.go"],
-    tags = ["bug",
+    tags = [
+        "bug",
         "local",
         "requires-network",
     ],

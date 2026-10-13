@@ -71,7 +71,7 @@ func TestRandomTree(t *testing.T) {
 					}
 				}
 				if depth < 3 {
-					for i := 0; i < 2+rng.Intn(3); i++ {
+					for i, n := 0, 2+rng.Intn(3); i < n; i++ {
 						name := fmt.Sprintf("d%d-é", i)
 						entries++
 						fmt.Fprintf(&checks, "test -d %s && test ! -L %s\n", quote(path+name), quote(path+name))
@@ -101,7 +101,13 @@ func TestRandomTree(t *testing.T) {
 			root := &repb.Directory{}
 			require.NoError(t, proto.Unmarshal(raw, root))
 			// Names may contain newlines: count NUL separators rather than text lines.
-			script := checks.String() + fmt.Sprintf("test \"$(find . -mindepth 1 -print0 | tr -cd '\\000' | wc -c)\" -eq %d\n", entries)
+			script := checks.String() + fmt.Sprintf("test \"$(find . -mindepth 1 -print0 | tr -cd '\\000' | wc -c)\" -eq %d\n", entries+1)
+			// Put the oracle in CAS so a large generated model cannot exceed Linux
+			// single-argument limits. Verify this additional input before sourcing it.
+			oracle, err := c.Upload(ctx, "input-tree", []byte(script))
+			require.NoError(t, err)
+			root.Files = append([]*repb.FileNode{{Name: ".oracle.sh", Digest: oracle}}, root.Files...)
+			script = fmt.Sprintf("test ! -L .oracle.sh && test ! -x .oracle.sh\ntest \"$(sha256sum .oracle.sh | cut -d ' ' -f 1)\" = %s\n. ./.oracle.sh\n", quote(oracle.Hash))
 			for pass := 0; pass < 2; pass++ {
 				success(t, c, root, fmt.Sprintf("# seed=%d pass=%d\n", seed, pass)+script)
 			}

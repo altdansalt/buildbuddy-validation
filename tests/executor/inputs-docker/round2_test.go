@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/altdansalt/buildbuddy-validation/harness"
-	"sync"
 	"testing"
 	"time"
 
@@ -29,13 +28,9 @@ func TestInputTreeRound2(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("concurrent-cold-and-warm", func(t *testing.T) {
-		// Gate immediately before Execute, after every action is uploaded. Distinct
-		// scripts prevent action merging while identical roots share every CAS node.
+		// Parallel subtests exercise shared cold/warm CAS inputs. Do not gate all
+		// eight: Go may admit fewer than eight parallel tests on this runner.
 		for wave := 0; wave < 2; wave++ {
-			var ready sync.WaitGroup
-			ready.Add(8)
-			gate := make(chan struct{})
-			go func() { ready.Wait(); close(gate) }()
 			t.Run(fmt.Sprintf("wave-%d", wave), func(t *testing.T) {
 				for i := 0; i < 8; i++ {
 					t.Run(fmt.Sprintf("action-%d", i), func(t *testing.T) {
@@ -59,7 +54,7 @@ func TestInputTreeRound2(t *testing.T) {
 						// Inputs are hardlinked and must not be modified in place. Replace the
 						// directory entry before writing to keep cached input inodes immutable.
 						script += "rm shared/f000\nprintf changed > shared/f000\ntest \"$(cat shared/f001)\" = shared-content\nsleep 1\n"
-						r := executeAfter(t, c, root, script, func() { ready.Done(); <-gate })
+						r := execute(t, c, root, script)
 						require.Zero(t, r.GetStatus().GetCode(), "%v", r.GetStatus())
 						require.NotNil(t, r.Result)
 						require.Zero(t, r.Result.ExitCode, "%v", r.Result)

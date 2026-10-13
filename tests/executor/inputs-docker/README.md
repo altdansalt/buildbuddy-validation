@@ -50,3 +50,30 @@ Optional metadata application is server-defined; the metadata probe checks
 successful retrieval/materialization, not mandatory Unix mode or mtime support.
 Limits: no runner recycling, nested virtualization, arbitrary mutation of
 hardlinked input inodes, or exhaustive resource-limit coverage.
+
+## Validation and bare-isolation comparison
+
+[Passing suite](https://app.buildbuddy.io/invocation/def534ad-5a64-4275-b5a0-b988c69125c1)
+completed in 163 seconds, including all six seeded trees twice and the ported
+cold/warm/concurrent controls.
+
+| Bare finding | Docker result | Area record |
+| --- | --- | --- |
+| Confirmed repeated-content hardlink limit | Reproduces twice; UNKNOWN / EMLINK before command | [hardlink limit](../../../../findings/executor-inputs-docker-hardlink-limit.md) |
+| Confirmed metadata-only empty directory (app CAS / executor) | Reproduces twice; FAILED_PRECONDITION / GetTree NotFound | [metadata-only directory](../../../../findings/executor-inputs-docker-metadata-only-directory.md) |
+| Rejected collision status-code claim | Rejected tree; no INVALID_ARGUMENT requirement asserted | Passing regression coverage |
+
+Bug runs: [first](https://app.buildbuddy.io/invocation/cbd39c1c-5137-4d82-ad32-ed072fde0998),
+[second](https://app.buildbuddy.io/invocation/1cd129b6-7fee-4a2e-bd75-6122ee2dcbe8).
+Findings have status `unverified` pending maintainer review, per this area's task.
+The fixture enables normal bridge iptables rules and uses the harness startup
+lock; copying the older iptables-disabled fixture caused local Redis readiness
+timeouts on the validated runner. The concurrency port drops the eight-way
+barrier so Go's bounded parallel-test scheduler cannot deadlock. Generated
+assertions are uploaded as an additional digest-checked `.oracle.sh` input,
+so large models do not exceed Linux's single-argument limit.
+
+No shared dependency changes are needed. A reusable harness Docker-isolation
+fixture (private daemon/socket and aligned workspace mount) would remove copied
+setup code. Longer seed sweeps, runner recycling and shrink automation for any
+future property failure remain follow-ups.
