@@ -430,7 +430,7 @@ func TestMembershipStateMachine(t *testing.T) {
 	p := startIssuer(t)
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}, SkipAuthBootstrap: true,
 		Args:   map[harness.Component][]string{harness.App: {"--auth.api_key_group_cache_ttl=0"}, harness.CacheProxy: {"--auth.remote.jwt_cache_ttl=2s"}},
-		Config: map[harness.Component]harness.Config{harness.App: {"auth": harness.Config{"enable_self_auth": false, "disable_refresh_token": true, "oauth_providers": []any{harness.Config{"issuer_url": p.url, "client_id": "membership-client", "client_secret": "fixture-secret"}}}, "app": harness.Config{"create_group_per_user": false, "user_owned_keys_enabled": true}}}})
+		Config: map[harness.Component]harness.Config{harness.App: {"auth": harness.Config{"enable_anonymous_usage": false, "enable_self_auth": false, "disable_refresh_token": true, "oauth_providers": []any{harness.Config{"issuer_url": p.url, "client_id": "membership-client", "client_secret": "fixture-secret"}}}, "app": harness.Config{"create_group_per_user": false, "user_owned_keys_enabled": true}}}})
 	admin := createIdentity(t, f, p, "admin")
 	member := createIdentity(t, f, p, "member")
 	gid := stringValue(mustHTTP(t, admin.web, "CreateGroup", map[string]any{"requestContext": admin.web.RequestContext(admin.home), "name": "Membership target", "urlIdentifier": "membership-target", "userOwnedKeysEnabled": true})["id"])

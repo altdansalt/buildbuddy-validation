@@ -254,9 +254,11 @@ func observeTargetKey(conn *grpc.ClientConn, admin, member *identity, gid string
 			if res.StatusCode != 200 || string(data) != "membership surface seed" {
 				return fmt.Errorf("HTTP download %d %q", res.StatusCode, data)
 			}
+		} else if res.StatusCode == 200 {
+			// Anonymous usage is disabled here; with it enabled the endpoint serves
+			// anyone (see :download_bug and its finding).
+			return fmt.Errorf("revoked HTTP download succeeded: %d %q", res.StatusCode, data)
 		}
-		// Known divergence: /file/download still serves a removed member's key.
-		// Documented and asserted by :download_bug (findings/app-users-membership-http-download-removed-key.md).
 
 		resource := join(bytesField(1, join(text(1, member.seed.Hash), number(2, uint64(member.seed.SizeBytes)))), number(4, 2), number(5, 1))
 		meta, me := rpc(conn, member.targetKey, "GetCacheMetadata", join(bytesField(1, requestContext(member.uid, gid)), bytesField(2, resource)))
