@@ -25,3 +25,31 @@ events in one streaming RPC belong to the same stream, sequence numbers start
 at one, and ACKs identify committed events. The
 [Remote Execution API](https://github.com/bazelbuild/remote-apis/blob/6def1c5d27a5/build/bazel/remote/execution/v2/remote_execution.proto)
 does not define BES semantics; BES uses google.devtools.build.v1 instead.
+
+Round 2 adds `round2`, covering canceled uploads followed by a full replay
+(seed `20261012`, four random prefix cut points). Readback checks completion and
+exactly one copy of each progress marker after retry. No partial ACK is assumed:
+the server emits ACKs only after the client closes the send side. Retrying starts
+at sequence 1 because the canceled upload has no committed ACKs.
+
+The boundary coverage measures the complete protobuf request at 49,999,999,
+50,000,000 and 50,000,001 bytes, around the released default receive limit.
+The first two must complete and persist a successful invocation; the last must
+return ResourceExhausted without ACKs, followed by a healthy upload.
+
+The bug-tagged `mixed_identity_persistence` extends the existing identity defect:
+progress
+and finish labeled with a second invocation are stored under the first ID,
+while the second ID remains NotFound. This is a characterization of the same
+fixture-local, same-group behavior; it demonstrates no cross-group effect.
+It expects rejection and forbids second-ID events in the first invocation.
+The original `changed_identity` and `fresh_offset` bug tests are unchanged.
+Missing-envelope and malformed-wire coverage requires rejection without ACKs
+and logs observed status codes. The current release returns FailedPrecondition
+and Unknown respectively; BES does not explicitly mandate either code.
+
+`invalid_sequence_code` is a separate bug-tagged proposed canonical-error repro:
+gaps and duplicates return Unknown rather than InvalidArgument. The finding
+stays unverified pending independent review; BES explicitly mandates rejection,
+but does not explicitly choose a gRPC code. Run it with
+`--test_tag_filters=bug --nocache_test_results`.

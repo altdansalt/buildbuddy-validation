@@ -3,9 +3,9 @@
 Title: Fresh BES streams starting above one are ACKed without persistence
 Components: app
 Image version/digest: enterprise-v2.314.0; gcr.io/flame-public/buildbuddy-app-enterprise@sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843
-Severity: medium
-Severity justification: An authenticated uploader that loses its initial event or incorrectly resumes a new invocation receives successful commit acknowledgements for discarded data, suppressing retries and hiding missing build records. This requires a nonstandard or interrupted client; no cross-organization impact was demonstrated.
-Status: unverified
+Severity: low
+Severity justification: Malformed authenticated clients receive misleading successful commit acknowledgements. The repro does not demonstrate impact on conforming clients or a cross-organization authorization bypass; independent review therefore lowers severity from medium to low.
+Status: confirmed
 Repro test target: //tests/app/bes:fresh_offset
 BuildBuddy invocation: https://app.buildbuddy.io/invocation/d375f6f1-7f04-4f31-9c9d-578fa786679c
 
@@ -38,6 +38,20 @@ No image overrides, custom flags, or config overrides. Harness defaults: test-lo
 
 The released [handler](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/server/build_event_protocol/build_event_handler/build_event_handler.go#L999-L1017) sets `isVoid` for any initial sequence greater than one, without establishing whether that invocation was previously committed. Finalization is a no-op for void channels, while the server still sends ACKs. The source comment explicitly acknowledges relying on clients always starting at one. An appropriate fix could verify persisted completion before allowing this suffix retry path.
 
-Reproduce with `GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/bes:fresh_offset --test_tag_filters=bug --nocache_test_results` after configuring the public runner fetch remote per AGENTS.md. The Remote Execution API does not specify BES; this finding uses the release's google.devtools.build.v1 contract. Status is left unverified for maintainer triage as requested; no upstream report was sent.
+Reproduce with `GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/bes:fresh_offset --test_tag_filters=bug --nocache_test_results` after configuring the public runner fetch remote per AGENTS.md. The Remote Execution API does not specify BES; this finding uses the release's google.devtools.build.v1 contract. The original report left status unverified pending independent review; no upstream report was sent.
 
 Final validation with preserved-container panic checks: [green regression](https://app.buildbuddy.io/invocation/f3221279-bdb0-4c57-a375-ec1522d91113), [third explicit reproduction](https://app.buildbuddy.io/invocation/09b89765-610b-46a7-8bba-b0a493a04b78). Both reproducers failed at the intended assertion again; no panic/fatal-error markers were detected.
+
+## Verification
+
+Verdict: **confirmed**. The client is invalid: a fresh stream must begin at 1. The defect is the successful commit acknowledgement for data deliberately discarded, not the lack of support for starting at 2. The response contract explicitly says failure to commit causes an RPC error. Legitimate suffix retries can be ACKed when previously committed; this test uses a new random UUID and rules that case out.
+
+The [handler](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/server/build_event_protocol/build_event_handler/build_event_handler.go#L999-L1017) intentionally assumes every initial sequence greater than 1 is a finalized-invocation retry, sets `isVoid`, and performs no persisted-completion lookup. [FinalizeInvocation](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/server/build_event_protocol/build_event_handler/build_event_handler.go#L852-L856) becomes a no-op, while [postProcessStream](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/server/build_event_protocol/build_event_server/build_event_server.go#L229-L266) ACKs sequence 2. Both runs returned that ACK and nil error, then GetInvocation returned NotFound. This source comment explains the optimization but does not make a nonexistent commit a valid acknowledgement.
+
+Severity changed from medium to **low**: the demonstrated loss requires an uploader violating the initial-sequence contract. No failure of conforming first attempts or loss of previously committed suffix retries was shown. The test and central claim are correct; an interrupted upload alone is not sufficient to establish this defect without the malformed fresh-stream condition.
+
+Reviewed independently on 2026-10-12 against PR #22's tests and the exact app digest above. No image, flag, or fixture configuration overrides were used. RPCs address the fixture's loopback container endpoints with a disposable local API key. The request helpers encode the pinned Bazel protobuf fields and do not rewrite stream identities. Each reproducer first successfully ACKs a sequence-1 control; the full BES regression target also passed in the first verification invocation, including completed invocation readback and legitimate suffix retries. Both independent uncached executions failed at the reported assertion, without a panic marker; this is deterministic behavior rather than readiness, authentication, or storage flakiness.
+
+Checked [bazelbuild/remote-apis](https://github.com/bazelbuild/remote-apis/blob/6def1c5d27a527c400875c24ae8b1a160145d7e1/build/bazel/remote/execution/v2/remote_execution.proto): REAPI defines execution/cache APIs and invocation correlation in RequestMetadata, not BES acknowledgement semantics. The applicable contract is the release's [PublishBuildEvent proto](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/proto/publish_build_event.proto#L138-L159). The release's [write architecture docs](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/docs/architecture-build-event-write.md) do not document an exception to that contract.
+
+Commands used `GIT_CONFIG_GLOBAL=/dev/null bb remote test <targets> --config=nobug --test_tag_filters= --nocache_test_results --test_output=all`, with the public GitHub fetch remote. [Verification run 1](https://app.buildbuddy.io/invocation/3f50e147-6d05-4e95-9dce-28d0ec43b8a6) ran both bug targets and `//tests/app/bes:regression`; [verification run 2](https://app.buildbuddy.io/invocation/65e0f9cf-fbd6-4f3b-bb1f-8869d57f4233) ran both bug targets. Failures are the expected defect assertions, not build failures.
