@@ -8,20 +8,31 @@
 | [Negative OutputFile digest size bypasses ActionResult validation](app-action-cache-negative-output-size.md) | app | medium | confirmed | `//tests/app/action-cache:malformed_result_test` |
 | [BES accepts a changed stream identity and ACKs the wrong invocation](app-bes-changed-stream-id.md) | app | low | confirmed | `//tests/app/bes:changed_identity` |
 | [Fresh BES streams starting above one are ACKed without persistence](app-bes-fresh-offset.md) | app | low | confirmed | `//tests/app/bes:fresh_offset` |
+| [QueryWriteStatus is unimplemented for unknown and finalized uploads](app-bytestream-query-write-status.md) | app | medium | confirmed | `//tests/app/bytestream:query_status_bug_test` |
+| [ByteStream Read past EOF panics instead of returning OUT_OF_RANGE](app-bytestream-read-past-end-panic.md) | app | medium | confirmed | `//tests/app/bytestream:read_past_end_bug_test` |
+| [Closing an unfinished ByteStream Write omits the response message](app-bytestream-unfinished-write-response.md) | app | medium | confirmed | `//tests/app/bytestream:unfinished_response_bug_test` |
+| [App and cache proxy advertise unlimited batches but reject a 4,000,001-byte batch read](app-capabilities-batch-read-limit.md) | app / cacheproxy | medium | confirmed | `//tests/app/capabilities:batch_limit_bug_test` |
+| [Cache proxy reports exec_enabled=true but Execute returns unknown service](app-capabilities-proxy-execution.md) | app / cacheproxy | low | confirmed | `//tests/app/capabilities:proxy_execution_bug_test` |
 | [BatchUpdateBlobs accepts nonempty data for the empty digest](app-cas-batch-empty-digest-validation.md) | app | low | confirmed | `//tests/app/cas-batch:empty_digest_bug_test` |
 | [Malformed digest aborts valid peers in CAS batch RPCs](app-cas-batch-malformed-digest-aborts-batch.md) | app | low | confirmed | `//tests/app/cas-batch:malformed_digest_bug_test` |
 | [BatchUpdateBlobs reports INTERNAL for malformed client zstd data](app-compression-corrupt-batch-status.md) | app | low | confirmed | `//tests/app/compression:corrupt_batch_zstd_test` |
 | [Compressed ByteStream Read accepts nonzero read_limit instead of INVALID_ARGUMENT](app-compression-read-limit.md) | app | low | confirmed | `//tests/app/compression:compressed_read_limit_test` |
 | [Execute reports the action digest as missing when only the command is absent](app-execution-api-missing-command-digest.md) | app | medium | confirmed | `//tests/app/execution-api:missing_command_bug_test` |
 | [GetCapabilities accepts invalid UTF-8 in instance_name](app-grpc-edges-invalid-utf8.md) | app | low | confirmed | `//tests/app/grpc-edges:invalid_utf8_test` |
+| [CAS tree traversal reports an uploaded metadata-only directory as missing](app-input-tree-metadata-only-directory.md) | app / executor | low | confirmed | `//tests/executor/input-tree:input_tree_limits_test` |
 | [v1 GetLog starts at the last log chunk instead of the first](app-invocations-api-log-pagination.md) | app | medium | confirmed | `//tests/app/invocations-api:log_pagination_bug_test` |
 | [Checksum cache hits bypass oldest_content_accepted](app-remote-asset-oldest-content-accepted.md) | app | low | confirmed | `//tests/app/remote-asset:freshness_bug` |
 | [FetchBlob maps origin timeout, access denial, and checksum mismatch to NOT_FOUND](app-remote-asset-origin-error-status.md) | app | medium | confirmed | `//tests/app/remote-asset:origin_status_bug` |
 | [Compressed ByteStream reads accept a nonzero read limit](cacheproxy-compression-read-limit.md) | cacheproxy / app | low | confirmed | `//tests/cacheproxy/compression:compressed_read_limit_bug_test` |
+| [Bare executor ignores the action's PATH when resolving an unqualified executable](executor-env-args-command-path.md) | executor | medium | confirmed | `//tests/executor/env-args:path_bug_test` |
+| [Valid repeated-digest input tree fails at the filesystem hardlink limit](executor-input-tree-hardlink-limit.md) | executor | low | confirmed | `//tests/executor/input-tree:input_tree_limits_test` |
 | [Malformed input tree with a file/directory name collision returns UNKNOWN instead of INVALID_ARGUMENT](executor-input-tree-name-collision-status.md) | executor | low | rejected | `//tests/executor/input-tree:file_directory_collision_test` |
 | [Bare action input mutation poisons subsequent action inputs](executor-isolation-firecracker-input-cache-poisoning.md) | executor | medium | confirmed | `//tests/executor/isolation-firecracker:input_mutation_bug_test` |
 | [Ignored legacy output directories alter modern action execution](executor-outputs-legacy-directory-precreation.md) | executor | low | confirmed | `//tests/executor/outputs:output_paths_precedence (TestOutputPathsIgnoreLegacyDirectoryCreation); legacy-only behavior probe: //tests/executor/outputs:missing_legacy_directory` |
 | [Executor accepts legacy output type mismatches](executor-outputs-legacy-type-mismatch.md) | executor | medium | confirmed | `//tests/executor/outputs:legacy_type_mismatch` |
 | [Legacy fields suppress symlinks requested through output_paths](executor-outputs-output-paths-symlink-loss.md) | executor | medium | confirmed | `//tests/executor/outputs:output_paths_precedence` |
+| [Overlapping directory outputs produce an incomplete parent Tree](executor-outputs-overlapping-directory-tree.md) | executor | medium | confirmed | `//tests/executor/outputs:overlapping_directories` |
+| [Explicit nested output file omitted from OutputFiles](executor-outputs-overlapping-file.md) | executor | low | confirmed | `//tests/executor/outputs:overlapping_file` |
+| [Requested output mtime silently omitted](executor-outputs-requested-mtime.md) | executor | low | confirmed | `//tests/executor/outputs:requested_mtime` |
 | [Recycled bare runner retains task-scoped TMPDIR files across actions](executor-runner-recycling-tmpdir-leak.md) | executor | medium | confirmed | `//tests/executor/runner-recycling:tmp_leak` |
 | [Graceful action timeout leaves a TERM-ignoring descendant running after the grace period](executor-timeouts-cancel-graceful-orphan.md) | executor | medium | confirmed | `//tests/executor/timeouts-cancel:graceful_timeout_child_test` |
