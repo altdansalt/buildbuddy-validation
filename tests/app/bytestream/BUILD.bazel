@@ -1,0 +1,47 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+DEPS = [
+    "//harness:go_default_library",
+    "@org_golang_google_genproto_googleapis_bytestream//:go_default_library",
+    "@org_golang_google_grpc//codes:go_default_library",
+    "@org_golang_google_grpc//status:go_default_library",
+]
+
+go_test(
+    name = "regression_test",
+    srcs = ["bytestream_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "query_status_bug_test",
+    srcs = ["bytestream_test.go", "status_bug_test.go"],
+    size = "large",
+    timeout = "long",
+    args = ["-test.run=TestQueryWriteStatus"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "read_past_end_bug_test",
+    srcs = ["bytestream_test.go", "status_bug_test.go"],
+    size = "large",
+    timeout = "long",
+    args = ["-test.run=TestReadPastEnd"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "unfinished_response_bug_test",
+    srcs = ["bytestream_test.go", "status_bug_test.go"],
+    size = "large",
+    timeout = "long",
+    args = ["-test.run=TestUnfinishedWriteResponse"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
