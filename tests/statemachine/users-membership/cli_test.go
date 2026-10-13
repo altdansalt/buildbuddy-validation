@@ -64,7 +64,8 @@ output=b""; deadline=time.monotonic()+10
 try:
  while time.monotonic()<deadline:
   if select.select([fd],[],[],0.1)[0]:
-   output+=os.read(fd,65536)
+   try: output+=os.read(fd,65536)
+   except OSError: break
    if b"ctrl+c: quit" in output or b"q: quit" in output: break
 finally:
  os.write(fd,b"\x03")
