@@ -1,6 +1,7 @@
 package remoteassetstate
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -123,6 +124,9 @@ func TestFetchBlobStateMachine(t *testing.T) {
 			instance := "remote-asset-state/" + string(component)
 			model := map[string][]byte{}
 			fetch := func(want []byte, immutable bool, fresh bool) {
+				mu.Lock()
+				beforeFetch := hits
+				mu.Unlock()
 				req := &rapb.FetchBlobRequest{InstanceName: instance, Uris: []string{originURL}, DigestFunction: repb.DigestFunction_SHA256}
 				if immutable {
 					h := sha256.Sum256(want)
@@ -135,6 +139,15 @@ func TestFetchBlobStateMachine(t *testing.T) {
 				require.NoError(t, err)
 				require.EqualValues(t, 0, rsp.GetStatus().GetCode(), "%v", rsp)
 				require.True(t, proto.Equal(harness.Digest(want), rsp.GetBlobDigest()), "%v", rsp)
+				_, alreadyCached := model[rsp.BlobDigest.Hash]
+				mu.Lock()
+				afterFetch := hits
+				mu.Unlock()
+				if immutable && alreadyCached {
+					require.Equal(t, beforeFetch, afterFetch, "checksum hit must reuse CAS")
+				} else {
+					require.Equal(t, beforeFetch+1, afterFetch, "mutable or cold fetch must contact origin")
+				}
 				model[rsp.BlobDigest.Hash] = append([]byte(nil), want...)
 				for _, data := range model {
 					d := harness.Digest(data)
@@ -221,7 +234,7 @@ func checkApp(t *testing.T, ctx context.Context, f *harness.Fixture, c *harness.
 		all = append(all, b...)
 	}
 	require.Equal(t, want, all)
-	for _, path := range []string{"/file/download?bytestream_url=" + url.QueryEscape(uri), "/api/v1/GetFile?uri=" + url.QueryEscape(uri)} {
+	for _, path := range []string{"/file/download?bytestream_url=" + url.QueryEscape(uri)} {
 		r, err := http.NewRequestWithContext(ctx, "GET", f.Endpoint(harness.App).HTTP+path, nil)
 		require.NoError(t, err)
 		r.Header.Set("x-buildbuddy-api-key", f.APIKey)
@@ -233,7 +246,30 @@ func checkApp(t *testing.T, ctx context.Context, f *harness.Fixture, c *harness.
 		require.Equal(t, 200, res.StatusCode, "%s", b)
 		require.Equal(t, want, b)
 	}
-	// GetFileRange's JSON HTTP surface backs API consumers too.
-	b, _ := json.Marshal(map[string]any{"uri": uri, "start": "1", "end": strconv.Itoa(len(want) - 1)})
-	_ = b
+	for _, method := range []string{"GetFile", "GetFileRange"} {
+		payload := map[string]any{"uri": uri}
+		if method == "GetFileRange" {
+			payload["start"] = "1"
+			payload["end"] = strconv.Itoa(len(want) - 1)
+		}
+		b, err := json.Marshal(payload)
+		require.NoError(t, err)
+		r, err := http.NewRequestWithContext(ctx, "POST", f.Endpoint(harness.App).HTTP+"/api/v1/"+method, bytes.NewReader(b))
+		require.NoError(t, err)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("x-buildbuddy-api-key", f.APIKey)
+		res, err := f.Web.Client.Do(r)
+		require.NoError(t, err)
+		b, err = io.ReadAll(res.Body)
+		res.Body.Close()
+		require.NoError(t, err)
+		require.Equal(t, 200, res.StatusCode, "%s", b)
+		if method == "GetFile" {
+			require.Equal(t, want, b)
+		} else {
+			var out struct{ Data []byte }
+			require.NoError(t, json.Unmarshal(b, &out))
+			require.Equal(t, want[1:len(want)-1], out.Data)
+		}
+	}
 }
