@@ -77,6 +77,18 @@ func providerFixture(t *testing.T, provider string) *harness.Fixture {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	// Reused hosted runners may retain a DROP forwarding policy from another
+	// Docker daemon. Permit only traffic within this private daemon's random
+	// address pool; never change the runner's global forwarding policy.
+	rule := []string{"-w", "-s", poolCIDR, "-d", poolCIDR, "-m", "comment", "--comment", filepath.Base(dir), "-j", "ACCEPT"}
+	insert := append([]string{"-n", "iptables", "-I", "FORWARD", "1"}, rule...)
+	out, err := exec.Command("sudo", insert...).CombinedOutput()
+	require.NoError(t, err, string(out))
+	t.Cleanup(func() {
+		remove := append([]string{"-n", "iptables", "-D", "FORWARD"}, rule...)
+		out, err := exec.Command("sudo", remove...).CombinedOutput()
+		require.NoError(t, err, string(out))
+	})
 	b, err := exec.Command("docker", "network", "create", "action-network").CombinedOutput()
 	require.NoError(t, err, string(b))
 	t.Cleanup(func() {
@@ -171,6 +183,17 @@ func stdout(t *testing.T, f *harness.Fixture, r *repb.ExecuteResponse) string {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	b, err := f.Clients(harness.App).Read(ctx, "docker-isolation", r.Result.StdoutDigest)
+	require.NoError(t, err)
+	return string(b)
+}
+func stderr(t *testing.T, f *harness.Fixture, r *repb.ExecuteResponse) string {
+	t.Helper()
+	if r.GetResult().GetStderrDigest() == nil {
+		return string(r.GetResult().GetStderrRaw())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	b, err := f.Clients(harness.App).Read(ctx, "docker-isolation", r.Result.StderrDigest)
 	require.NoError(t, err)
 	return string(b)
 }

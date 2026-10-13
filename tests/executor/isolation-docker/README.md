@@ -46,7 +46,7 @@ no daemon settings outside this fixture change. Docker login configuration stays
 in a test temporary directory and is never mounted into the executor. Action
 credentials are supplied through the documented `container-registry-username`
 and `container-registry-password` properties. Checks cover denied anonymous
-pulls, successful authenticated pulls, wrong credentials after image caching,
+pulls, successful authenticated pulls,
 and named user/group resolution from the image's `/etc/passwd` and `/etc/group`.
 
 Two locally built Alpine variants publish different content under the same tag.
@@ -91,3 +91,10 @@ No shared changes are required. An optional harness helper exposing its selected
 Docker socket and planning matching executor workspace mounts would remove the
 need to duplicate private-daemon startup in this area. No dependency changes are
 needed.
+
+The separate bug-tagged `:registry_credentials_cache_bug` target checks wrong
+registry credentials before caching, while cached, and after explicit eviction.
+See [the unverified finding](../../../findings/executor-isolation-docker-private-image-credentials-cache.md).
+Run it with `--test_tag_filters=bug --nocache_test_results`. The same-group
+registry authorization policy requires independent review; no cross-group
+access is claimed.
