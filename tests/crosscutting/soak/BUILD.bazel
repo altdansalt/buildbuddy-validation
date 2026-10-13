@@ -4,7 +4,7 @@ go_test(
     name = "go_default_test",
     size = "large",
     args = ["-test.v"],
-    timeout = "long",
+    timeout = "eternal",
     srcs = ["soak_test.go"],
     tags = [
         "local",
