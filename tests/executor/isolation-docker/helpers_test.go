@@ -22,6 +22,10 @@ import (
 // Own the daemon as well as its containers: socket access never reaches another
 // worker's containers. Register daemon cleanup before the fixture so it runs last.
 func fixture(t *testing.T) *harness.Fixture {
+	return providerFixture(t, "docker")
+}
+
+func providerFixture(t *testing.T, provider string) *harness.Fixture {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "bbval-isolation-")
 	require.NoError(t, err)
@@ -35,7 +39,7 @@ func fixture(t *testing.T) *harness.Fixture {
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "sudo", "-n", "dockerd", "--host=unix://"+socket,
 		"--data-root="+filepath.Join(dir, "docker"), "--exec-root="+filepath.Join(dir, "exec"),
-		"--pidfile="+filepath.Join(dir, "pid"), "--bridge=none", "--iptables=false", "--ip-masq=false", "--default-address-pool=base="+poolCIDR+",size=28")
+		"--pidfile="+filepath.Join(dir, "pid"), "--registry-mirror=https://mirror.gcr.io", "--insecure-registry=10.0.0.0/8", "--bridge=none", "--iptables=false", "--ip-masq=false", "--default-address-pool=base="+poolCIDR+",size=28")
 	cmd.Stdout = log
 	cmd.Stderr = log
 	require.NoError(t, cmd.Start())
@@ -84,7 +88,7 @@ func fixture(t *testing.T) *harness.Fixture {
 	extra := filepath.Join(dir, "extra")
 	require.NoError(t, os.MkdirAll(extra, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(extra, "marker"), []byte("read-only mount\n"), 0644))
-	return harness.Start(t, harness.Options{
+	opts := harness.Options{
 		Components: []harness.Component{harness.App, harness.Executor},
 		Config: map[harness.Component]harness.Config{harness.Executor: {"executor": harness.Config{
 			"docker_socket": "/var/run/docker.sock", "root_directory": filepath.Join(root, "remotebuilds"),
@@ -93,10 +97,25 @@ func fixture(t *testing.T) *harness.Fixture {
 			"docker_network": "action-network", "docker_volumes": []string{extra + ":/conformance-extra:ro"},
 		}}},
 		DockerArgs: map[harness.Component][]string{harness.Executor: {"--volume", socket + ":/var/run/docker.sock", "--volume", root + ":" + root, "--env", "DOCKER_HOST=unix:///var/run/docker.sock"}},
-	})
+	}
+	if provider != "docker" {
+		opts.Args = map[harness.Component][]string{harness.Executor: {"--executor.enable_" + provider + "=true", "--executor.container_registry_allowed_private_ips=127.0.0.0/8"}}
+		opts.DockerArgs[harness.Executor] = append(opts.DockerArgs[harness.Executor], "--privileged", "--cgroupns=host", "--volume", "/sys/fs/cgroup:/sys/fs/cgroup:rw")
+		if provider == "podman" {
+			opts.Args[harness.Executor] = append(opts.Args[harness.Executor], "--executor.podman.storage_driver=vfs", "--executor.podman.enable_stats=false")
+		} else {
+			opts.Args[harness.Executor] = append(opts.Args[harness.Executor], "--executor.oci.default_network_mode=off")
+		}
+	}
+	return harness.Start(t, opts)
 }
 
 func execute(t *testing.T, f *harness.Fixture, image, script, wd string, props map[string]string) *repb.ExecuteResponse {
+	t.Helper()
+	return executeTimeout(t, f, image, script, wd, props, 40*time.Second)
+}
+
+func executeTimeout(t *testing.T, f *harness.Fixture, image, script, wd string, props map[string]string, timeout time.Duration) *repb.ExecuteResponse {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -124,7 +143,7 @@ func execute(t *testing.T, f *harness.Fixture, image, script, wd string, props m
 	}
 	command, err := c.UploadProto(ctx, instance, &repb.Command{Arguments: []string{"/bin/sh", "-c", script}, WorkingDirectory: wd, EnvironmentVariables: []*repb.Command_EnvironmentVariable{{Name: "CONFORMANCE_VALUE", Value: "spaces = and unicode λ"}}, OutputPaths: []string{"output.txt"}, Platform: platform})
 	require.NoError(t, err)
-	action, err := c.UploadProto(ctx, instance, &repb.Action{CommandDigest: command, InputRootDigest: root, Timeout: durationpb.New(40 * time.Second), DoNotCache: true})
+	action, err := c.UploadProto(ctx, instance, &repb.Action{CommandDigest: command, InputRootDigest: root, Timeout: durationpb.New(timeout), DoNotCache: true})
 	require.NoError(t, err)
 	stream, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: instance, ActionDigest: action, SkipCacheLookup: true, DigestFunction: repb.DigestFunction_SHA256})
 	require.NoError(t, err)
