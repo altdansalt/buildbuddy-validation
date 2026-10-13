@@ -28,7 +28,7 @@ type observation struct {
 }
 
 // One Execute per action: reconnecting observers must never resubmit work.
-func submitHeld(t *testing.T, f *harness.Fixture, ctx context.Context, id string) <-chan observation {
+func submitHeld(t *testing.T, f *harness.Fixture, ctx context.Context, id string, durableInputs bool) <-chan observation {
 	t.Helper()
 	c := f.Clients(harness.App)
 	root, err := c.UploadProto(ctx, "lifecycle-faults", &repb.Directory{})
@@ -40,6 +40,16 @@ func submitHeld(t *testing.T, f *harness.Fixture, ctx context.Context, id string
 	require.NoError(t, err)
 	action, err := c.UploadProto(ctx, "lifecycle-faults", &repb.Action{CommandDigest: cmd, InputRootDigest: root, Timeout: durationpb.New(180 * time.Second), DoNotCache: true})
 	require.NoError(t, err)
+	if durableInputs {
+		// Pebble uses unsynced writes. Flush inputs through a graceful restart
+		// before injecting SIGKILL, so cache durability is not the fault under test.
+		f.Restart(harness.App)
+		c = f.Clients(harness.App)
+		for _, d := range []*repb.Digest{root, cmd, action} {
+			_, err := c.Read(ctx, "lifecycle-faults", d)
+			require.NoError(t, err, "preflight inputs did not survive graceful restart")
+		}
+	}
 	stream, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: "lifecycle-faults", ActionDigest: action, SkipCacheLookup: true})
 	require.NoError(t, err)
 	events := make(chan observation, 128)
@@ -155,7 +165,7 @@ func TestSIGKILLInFlightReschedules(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	id := "kill-" + f.ID
-	events := submitHeld(t, f, ctx, id)
+	events := submitHeld(t, f, ctx, id, false)
 	waitStage(t, events, repb.ExecutionStage_EXECUTING)
 	waitMarker(t, f, harness.Executor, id)
 	replacement := f.AddExecutor(harness.Options{})
@@ -174,14 +184,14 @@ func TestDrainWithQueuedActions(t *testing.T) {
 	t.Logf("lifecycle.seed=%d", *faultSeed)
 	rng := rand.New(rand.NewSource(*faultSeed))
 	first := "held-" + f.ID
-	running := submitHeld(t, f, ctx, first)
+	running := submitHeld(t, f, ctx, first, false)
 	waitStage(t, running, repb.ExecutionStage_EXECUTING)
 	waitMarker(t, f, harness.Executor, first)
 	ids := []string{"queue-a-" + f.ID, "queue-b-" + f.ID, "queue-c-" + f.ID}
 	rng.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
 	queued := make([]<-chan observation, len(ids))
 	for i, id := range ids {
-		queued[i] = submitHeld(t, f, ctx, id)
+		queued[i] = submitHeld(t, f, ctx, id, false)
 		waitStage(t, queued[i], repb.ExecutionStage_QUEUED)
 	}
 	// Capacity is fully occupied; verify none of the queued commands actually started.
@@ -206,7 +216,7 @@ func TestAppOutageWhileExecutorHoldsWork(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	id := "outage-" + f.ID
-	events := submitHeld(t, f, ctx, id)
+	events := submitHeld(t, f, ctx, id, true)
 	name := waitStage(t, events, repb.ExecutionStage_EXECUTING)
 	waitMarker(t, f, harness.Executor, id)
 	f.Kill(harness.App, "KILL")
