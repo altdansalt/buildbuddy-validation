@@ -28,12 +28,28 @@ REAPI allows redundant execution; the merging assertion checks BuildBuddy's
 configured default, not a protocol requirement. The shell tasks are idempotent,
 use the bare runner, and use the default retry-enabled platform behavior.
 
-The shutdown test works around the fixture's lack of a Docker control API by
-locating its daemon using its exact executor container name. It inspects only
-that fixture-owned name and stops only that container. A second fixture uses the
-same daemon and first fixture's private network. Cleanup is registered by both
-fixtures. No external app/executor is addressed.
+Round 2 adds seeded (20261013) shuffled submission of unique priorities behind a
+shell-controlled single-slot gate. Executor debug logs prove every reservation
+has entered the local queue before releasing the gate. Execution timestamps
+check ascending priority within each group and a maximum one-task difference
+between every prefix of three equally backlogged organizations. This checks
+strict round-robin fairness for equal-sized queued tasks, not an infinite-load
+starvation guarantee or preemption. The organizations have separate disposable
+API keys; all requests address the fixture-local app.
 
-Strict multi-organization round-robin fairness, priority ordering, abrupt SIGKILL
-lease expiry, retry exhaustion, and hedged executions remain follow-ups. The
-finite batch checks eventual progress, not starvation under an infinite load.
+An abrupt-kill test waits for a command-created marker on each fresh executor,
+sends SIGKILL, and replaces that executor through `AddExecutor`. Five attempts
+must end with INTERNAL and the scheduler's exhaustion message on the original
+operation. A fresh action must still succeed afterwards. Test-local app lease
+and grace periods are shortened to two seconds for bounded recovery.
+
+Hedging is supported in this release. With hedge count one and delay zero, six
+additional identical Execute requests must attach to the original operation,
+while a shared append-only marker records exactly two command starts. Both
+commands are held at a shell gate until the hedge starts. The scripts are
+idempotent apart from their fixture-local instrumentation. Hedge behavior is a
+BuildBuddy configuration contract, not a REAPI exactly-once requirement.
+
+Lifecycle tests use `Kill`, `Stop`, and `AddExecutor` from PR #63. Until that PR
+and the first scheduling PR merge, this branch includes those dependencies.
+All builds and component tests run through `bb remote`.

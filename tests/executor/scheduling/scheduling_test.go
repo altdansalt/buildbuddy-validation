@@ -4,11 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -189,39 +185,11 @@ func TestDuplicateInFlightAndWaitAfterDisconnect(t *testing.T) {
 	check(t, ctx, c, receive(wait), "merged", 0)
 }
 
-// The fixture currently exposes container names but not its owned Docker socket.
-// Select the daemon by inspecting only our known container. This also supports
-// plain bb remote runs where the harness starts a private daemon.
-func fixtureDockerHost(t *testing.T, f *harness.Fixture) string {
-	t.Helper()
-	hosts := []string{os.Getenv("DOCKER_HOST"), "unix:///var/run/docker.sock"}
-	sockets, err := filepath.Glob(filepath.Join(os.TempDir(), "bbval-docker-*", "docker.sock"))
-	require.NoError(t, err)
-	for _, s := range sockets {
-		hosts = append(hosts, "unix://"+s)
-	}
-	for _, host := range hosts {
-		if host == "" {
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		out, err := exec.CommandContext(ctx, "docker", "--host", host, "inspect", "--format", "{{.Name}}", f.Endpoint(harness.Executor).Container).CombinedOutput()
-		cancel()
-		if err == nil && strings.TrimSpace(string(out)) == "/"+f.Endpoint(harness.Executor).Container {
-			return host
-		}
-	}
-	t.Fatal("could not locate fixture Docker daemon")
-	return ""
-}
-
 func TestExecutorShutdownRetriesOnAnotherExecutor(t *testing.T) {
 	f := harness.Start(t, harness.Options{
 		Components: []harness.Component{harness.App, harness.Executor},
 		Args:       map[harness.Component][]string{harness.Executor: {"--max_shutdown_duration=5s", "--executor.shutdown_cleanup_duration=1s"}},
 	})
-	host := fixtureDockerHost(t, f)
-	t.Setenv("DOCKER_HOST", host)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	c := f.Clients(harness.App)
@@ -241,14 +209,9 @@ func TestExecutorShutdownRetriesOnAnotherExecutor(t *testing.T) {
 			break
 		}
 	}
-	second := harness.Start(t, harness.Options{
-		Components: []harness.Component{harness.Executor}, AppTarget: f.Endpoint(harness.App).InternalGRPC,
-		SkipAuthBootstrap: true,
-		DockerArgs:        map[harness.Component][]string{harness.Executor: {"--network", f.Network}},
-	})
-	require.NotEqual(t, f.Endpoint(harness.Executor).Container, second.Endpoint(harness.Executor).Container)
-	out, err := exec.CommandContext(ctx, "docker", "--host", host, "stop", "--time", "20", f.Endpoint(harness.Executor).Container).CombinedOutput()
-	require.NoError(t, err, "stop fixture executor: %s", out)
+	second := f.AddExecutor(harness.Options{})
+	require.NotEqual(t, f.Endpoint(harness.Executor).Container, f.Endpoint(second).Container)
+	f.Stop(harness.Executor)
 	result := receive(stream)
 	check(t, ctx, c, result, "recovered", 0)
 	require.Equal(t, name, result.name, "retry must preserve the operation")
