@@ -366,6 +366,10 @@ func checkPartialModel(t *testing.T, f *harness.Fixture, m buildModel, k int) {
 			last = fmt.Sprintf("invocation %v want configured=%d", inv, configured)
 			return false
 		}
+		if st := inv[0].(map[string]any)["invocationStatus"]; !finished && st == "COMPLETE_INVOCATION_STATUS" {
+			last = "invocation complete before BuildFinished"
+			return false
+		}
 		raw := readRPC(t, f, "/buildbuddy.service.BuildBuddyService/GetInvocation", field(2, str(1, m.id)))
 		if scalar(values(raw, 2)[0], 34) != uint64(configured) {
 			last = "grpc configured count"
@@ -426,7 +430,6 @@ func checkPartialModel(t *testing.T, f *harness.Fixture, m buildModel, k int) {
 			last = fmt.Sprintf("api invocation code=%d", code)
 			return false
 		}
-		_ = finished
 		return true
 	}, 15*time.Second, 100*time.Millisecond, "partial model after event %d did not converge", k+1)
 	t.Logf("event=%d partial-model convergence=%s", k+1, time.Since(started))

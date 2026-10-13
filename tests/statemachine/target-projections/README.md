@@ -72,3 +72,10 @@ https://app.buildbuddy.io/invocation/5d75326c-e94d-4751-bdc9-a7ddffea0d0e
 
 Earlier version including CLI, history and artifact surfaces also passed:
 https://app.buildbuddy.io/invocation/51280a71-909f-466e-b0e4-b36566bec306
+
+## Round 2 additions
+
+- `TestEveryEventProjection`: after each of the BES events (stream kept open) the raw proto/JSON event log, UI/gRPC/REST GetInvocation and every GetTarget reader are compared with a model replayed from the events so far.
+- Per-build checks also cover public API GetInvocation (metadata, artifacts, build-tool logs), GetFile/GetFileRange, CAS presence/batch reads at app and proxy, log chunk/download/CLI view, CLI `download artifacts`, SearchInvocation and invocation statistics.
+- `TestActionCacheUpdateSequence`, `TestDeleteRecreateSequenceColdProxy`, `TestActionCacheDelete*`: multi-step, two-key, app/proxy-crossing sequences with bounded convergence polling plus a stability hold; convergence times are logged (`-test.v`).
+- Known divergence: `:delete_repro` (tag `bug`), see `FINDING-warm-proxy-delete.md`.
