@@ -73,3 +73,45 @@ metadata (including actual image IDs), and owned-daemon logs under its unique
 subdirectory of `TEST_UNDECLARED_OUTPUTS_DIR`. Test-local keys in these outputs
 are disposable. Use Bazel test artifacts on the BuildBuddy invocation to inspect
 them. Images remain cached only when using a prestarted/shared Docker daemon.
+
+## Browser UI checks
+
+Browser fixtures must use an HTTP origin under `.test`: Chromium's HSTS preload
+list upgrades the default `http://app:8080` hostname to HTTPS. Configure the app
+and its Docker alias together before starting the fixture:
+
+```go
+f := harness.Start(t, harness.Options{
+    Components: []harness.Component{harness.App},
+    Config: map[harness.Component]harness.Config{
+        harness.App: {"app": harness.Config{"build_buddy_url": "http://buildbuddy.test:8080"}},
+    },
+    DockerArgs: map[harness.Component][]string{
+        harness.App: {"--network-alias", "buildbuddy.test"},
+    },
+})
+```
+
+The released app serves its bundled JavaScript UI on this same HTTP origin.
+`f.Browser(ctx, f.Web, groupID)` starts digest-pinned headless Chromium inside
+the fixture network and imports the selected WebSession's login cookies. It uses
+the released app's real JavaScript UI and the `Selected-Group-ID` cookie; API keys
+alone do not establish a web login. Self-auth has one fixed user. For other users,
+supply a WebSession with cookies obtained from a test-local OIDC login. The
+session must use this fixture's self-auth origin, reachable inside its network.
+
+Use a bounded context, then `browser.Open("/settings/org/api-keys",
+".api-keys-list")` to navigate and wait for a page-specific visible element.
+`browser.Text(selector)` reads rendered text; `browser.Run(...)` accepts chromedp
+actions for element queries, clicks and waits. Choose readiness selectors that
+appear after data loads, and retain a positive assertion when checking absence.
+See `//tests/statemachine/ui-smoke:go_default_test` for gRPC create/delete checked
+through the settings UI after navigation. No automatic push refresh is assumed.
+Browser containers share normal fixture cleanup/log/inspect capture; failed tests
+additionally attempt to save a screenshot and rendered body text. Keep the
+browser context alive through cleanup if failure artifacts are needed.
+
+Validated twice with
+`bb remote test //tests/statemachine/ui-smoke/... --test_output=errors --nocache_test_results --zip_undeclared_test_outputs`:
+[run 1](https://app.buildbuddy.io/invocation/6040da4a-16f8-4875-b321-d48ac04bc373),
+[run 2](https://app.buildbuddy.io/invocation/4cd7f931-c940-4bfd-9d2e-212ab575cb8a).
