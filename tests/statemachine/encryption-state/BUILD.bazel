@@ -1,20 +1,51 @@
 load("@rules_go//go:def.bzl", "go_test")
+
+DEPS = [
+    "//harness",
+    "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+    "@com_github_golang_jwt_jwt_v5//:go_default_library",
+    "@com_github_stretchr_testify//require:go_default_library",
+    "@org_golang_google_grpc//:go_default_library",
+    "@org_golang_google_grpc//codes:go_default_library",
+    "@org_golang_google_grpc//status:go_default_library",
+    "@org_golang_google_grpc//metadata:go_default_library",
+    "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+    "@org_golang_google_protobuf//encoding/protojson:go_default_library",
+    "@org_golang_google_protobuf//proto:go_default_library",
+]
+
 go_test(
     name = "go_default_test",
-    srcs = ["encryption_test.go"],
+    srcs = ["suite.go", "encryption_test.go"],
     size = "large",
     timeout = "long",
     tags = ["local", "requires-network"],
-    deps = [
-        "//harness",
-        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
-        "@com_github_golang_jwt_jwt_v5//:go_default_library",
-        "@com_github_stretchr_testify//require:go_default_library",
-        "@org_golang_google_grpc//:go_default_library",
-        "@org_golang_google_grpc//codes:go_default_library",
-        "@org_golang_google_grpc//status:go_default_library",
-        "@org_golang_google_grpc//metadata:go_default_library",
-        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
-        "@org_golang_google_protobuf//proto:go_default_library",
-    ],
+    deps = DEPS,
+)
+
+go_test(
+    name = "default_cache_test",
+    srcs = ["suite.go", "default_convergence_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "ac_metadata_bug_test",
+    srcs = ["suite.go", "metadata_repro_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "tree_status_bug_test",
+    srcs = ["suite.go", "tree_repro_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
 )
