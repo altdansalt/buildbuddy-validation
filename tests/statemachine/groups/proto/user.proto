@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+import "proto/context.proto";
+import "proto/grp.proto";
+import "proto/user_id.proto";
+
+package user;
+
+message GetUserRequest {
+  context.RequestContext request_context = 2;
+
+  user_id.UserId user_id = 1;
+}
+
+message SelectedGroup {
+  string group_id = 1;
+
+  enum Access {
+    UNKNOWN = 0;
+    ALLOWED = 1;
+    DENIED = 2;
+    DENIED_BY_IP_RULES = 3;
+  }
+  Access access = 2;
+}
+
+message Experiments {
+  bool codesearch_allowed = 1;
+}
+
+message GetUserResponse {
+  reserved 5;
+
+  context.ResponseContext response_context = 6;
+
+  user_id.DisplayUser display_user = 1;
+
+  repeated grp.Group user_group = 2;
+
+  string selected_group_id = 3 [deprecated = true];
+
+  SelectedGroup selected_group = 9;
+
+  repeated string allowed_rpc = 4;
+
+  bool github_linked = 7;
+
+  string subdomain_group_id = 8;
+
+  bool is_impersonating = 10;
+
+  Experiments experiments = 11;
+}
+
+message CreateUserRequest {
+
+  context.RequestContext request_context = 1;
+}
+
+message CreateUserResponse {
+  context.ResponseContext response_context = 2;
+
+  user_id.DisplayUser display_user = 1;
+}

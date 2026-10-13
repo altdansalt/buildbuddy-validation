@@ -1,0 +1,271 @@
+syntax = "proto3";
+
+import "proto/capability.proto";
+import "proto/context.proto";
+import "proto/user_id.proto";
+import "proto/user_list.proto";
+
+package grp;
+
+message Group {
+  reserved 8, 9;
+
+  string id = 1;
+
+  string name = 2;
+
+  string owned_domain = 3;
+
+  bool github_linked = 4;
+
+  string url_identifier = 5;
+
+  bool sharing_enabled = 6;
+
+  bool use_group_owned_executors = 7;
+
+  enum Role {
+    UNKNOWN_ROLE = 0;
+
+    DEVELOPER_ROLE = 1;
+
+    ADMIN_ROLE = 2;
+
+    WRITER_ROLE = 4;
+
+    READER_ROLE = 8;
+
+  }
+
+  SuggestionPreference suggestion_preference = 10;
+
+  bool user_owned_keys_enabled = 11;
+
+  bool bot_suggestions_enabled = 15;
+
+  bool developer_org_creation_enabled = 16;
+
+  string url = 12;
+
+  bool restrict_clean_workflow_runs_to_admins = 13;
+
+  bool enforce_ip_rules = 14;
+
+  bool external_user_management = 17;
+
+  repeated capability.Capability allowed_user_api_key_capabilities = 18;
+
+  bool code_search_enabled = 19;
+
+  repeated capability.Capability capabilities = 20;
+
+  enum GroupStatus {
+    UNKNOWN_GROUP_STATUS = 0;
+
+    FREE_TIER_GROUP_STATUS = 1;
+
+    ENTERPRISE_GROUP_STATUS = 2;
+
+    ENTERPRISE_TRIAL_GROUP_STATUS = 3;
+
+    BLOCKED_GROUP_STATUS = 4;
+
+    USAGE_BASED_GROUP_STATUS = 5;
+
+    OPEN_SOURCE_GROUP_STATUS = 6;
+  }
+
+  GroupStatus status = 21;
+}
+
+message JoinGroupRequest {
+  context.RequestContext request_context = 2;
+
+  string id = 1;
+}
+
+message JoinGroupResponse {
+  context.ResponseContext response_context = 1;
+}
+
+message GetGroupRequest {
+  context.RequestContext request_context = 2;
+
+  string url_identifier = 1;
+
+  string group_id = 3;
+}
+
+message GetGroupResponse {
+  context.ResponseContext response_context = 4;
+
+  string id = 1;
+
+  string name = 2;
+
+  string owned_domain = 3;
+
+  bool sso_enabled = 5;
+
+  string url = 6;
+
+  bool external_user_management = 7;
+}
+
+message GetGroupUsersRequest {
+  context.RequestContext request_context = 1;
+
+  string group_id = 2;
+
+  repeated GroupMembershipStatus group_membership_status = 3;
+}
+
+message GetGroupUsersResponse {
+  context.ResponseContext response_context = 1;
+
+  message GroupUser {
+    user_id.DisplayUser user = 1;
+    user_list.UserList user_list = 4;
+    GroupMembershipStatus group_membership_status = 2;
+    Group.Role role = 3;
+  }
+
+  repeated GroupUser user = 2;
+}
+
+message UpdateGroupUsersRequest {
+  context.RequestContext request_context = 1;
+
+  string group_id = 2;
+
+  message Update {
+    enum MembershipAction {
+      UNKNOWN_MEMBERSHIP_ACTION = 0;
+      ADD = 1;
+      REMOVE = 2;
+    }
+
+    user_id.UserId user_id = 1;
+
+    string user_list_id = 4;
+
+    MembershipAction membership_action = 2;
+
+    Group.Role role = 3;
+  }
+
+  repeated Update update = 3;
+}
+
+message UpdateGroupUsersResponse {
+  context.ResponseContext response_context = 1;
+}
+
+message CreateGroupRequest {
+  context.RequestContext request_context = 4;
+
+  string name = 1;
+
+  bool auto_populate_from_owned_domain = 2;
+
+  string url_identifier = 3;
+
+  bool sharing_enabled = 5;
+
+  bool use_group_owned_executors = 6;
+
+  bool user_owned_keys_enabled = 7;
+
+  bool bot_suggestions_enabled = 8;
+
+  bool developer_org_creation_enabled = 9;
+
+  bool code_search_enabled = 10;
+}
+
+message CreateGroupResponse {
+  context.ResponseContext response_context = 2;
+
+  string id = 1;
+
+  string url = 3;
+}
+
+message UpdateGroupRequest {
+  context.RequestContext request_context = 5;
+
+  string id = 1;
+
+  string name = 2;
+
+  bool auto_populate_from_owned_domain = 3;
+
+  string url_identifier = 4;
+
+  bool sharing_enabled = 6;
+
+  bool use_group_owned_executors = 7;
+
+  SuggestionPreference suggestion_preference = 8;
+
+  bool user_owned_keys_enabled = 9;
+
+  bool restrict_clean_workflow_runs_to_admins = 10;
+
+  bool bot_suggestions_enabled = 11;
+
+  bool developer_org_creation_enabled = 12;
+
+  bool code_search_enabled = 13;
+}
+
+message UpdateGroupResponse {
+  context.ResponseContext response_context = 1;
+}
+
+message SetGroupStatusRequest {
+  context.RequestContext request_context = 1;
+
+  Group.GroupStatus status = 2;
+}
+
+message SetGroupStatusResponse {
+  context.ResponseContext response_context = 1;
+}
+
+message SSOConfig {
+  string saml_idp_metadata_url = 1;
+}
+
+message GetSSOConfigRequest {
+  context.RequestContext request_context = 1;
+}
+
+message GetSSOConfigResponse {
+  context.ResponseContext response_context = 1;
+
+  SSOConfig config = 2;
+}
+
+message SetSSOConfigRequest {
+  context.RequestContext request_context = 1;
+
+  SSOConfig config = 2;
+}
+
+message SetSSOConfigResponse {
+  context.ResponseContext response_context = 1;
+}
+
+enum GroupMembershipStatus {
+  UNKNOWN_MEMBERSHIP_STATUS = 0;
+  MEMBER = 1;
+  REQUESTED = 2;
+}
+
+enum SuggestionPreference {
+  UNKNOWN_SUGGESTION_PREFERENCE = 0;
+  ENABLED = 1;
+  ADMINS_ONLY = 2;
+  DISABLED = 3;
+}

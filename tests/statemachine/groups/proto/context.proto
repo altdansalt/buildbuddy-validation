@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+import "proto/user_id.proto";
+
+package context;
+
+message RequestContext {
+  user_id.UserId user_id = 1;
+
+  string group_id = 2;
+
+  string impersonating_group_id = 4;
+
+  int32 timezone_offset_minutes = 3;
+
+  string timezone = 5;
+
+  string app_bundle_hash = 6;
+}
+
+message ResponseContext {
+}

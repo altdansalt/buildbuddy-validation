@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package capability;
+
+enum Capability {
+  UNKNOWN_CAPABILITY = 0;
+  CACHE_WRITE = 1;
+  REGISTER_EXECUTOR = 2;
+  CAS_WRITE = 4;
+  ORG_ADMIN = 8;
+  AUDIT_LOG_READ = 16;
+  REGISTER_CACHE_PROXY = 32;
+  SEND_NOTIFICATION = 64;
+}

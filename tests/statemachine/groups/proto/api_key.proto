@@ -1,0 +1,138 @@
+syntax = "proto3";
+
+import "proto/capability.proto";
+import "proto/context.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+package api_key;
+
+message ApiKey {
+  string id = 1;
+
+  string value = 2;
+
+  string label = 3;
+
+  repeated capability.Capability capability = 4;
+
+  bool visible_to_developers = 5;
+
+  bool user_owned = 6;
+
+  int64 expiry_usec = 7;
+
+  Certificate certificate = 8;
+
+  CreationMetadata creation_metadata = 9;
+
+  repeated Visibility visibility = 10;
+}
+
+message CreationMetadata {
+  google.protobuf.Timestamp created_at = 1;
+
+  string created_by = 2;
+}
+
+enum Visibility {
+  UNKNOWN_VISIBILITY = 0;
+  VISIBLE_TO_DEVELOPERS = 1;
+  VISIBLE_TO_GROUP_ADMINS = 2;
+}
+
+message Certificate {
+  string cert = 1;
+
+  string key = 2;
+}
+
+message CreateApiKeyRequest {
+  context.RequestContext request_context = 1;
+
+  reserved 2;
+
+  string user_id = 6;
+
+  string label = 3;
+
+  repeated capability.Capability capability = 4;
+
+  bool visible_to_developers = 5;
+
+  google.protobuf.Duration expires_in = 7;
+
+  repeated Visibility visibility = 8;
+}
+
+message CreateApiKeyResponse {
+  context.ResponseContext response_context = 1;
+
+  ApiKey api_key = 2;
+}
+
+message GetApiKeysRequest {
+  context.RequestContext request_context = 1;
+
+  string user_id = 3;
+
+  string group_id = 2;
+}
+
+message GetApiKeysResponse {
+  context.ResponseContext response_context = 1;
+
+  repeated ApiKey api_key = 2;
+}
+
+message GetApiKeyRequest {
+  context.RequestContext request_context = 1;
+
+  string api_key_id = 2;
+
+  bool include_certificate = 3;
+}
+
+message GetApiKeyResponse {
+  context.ResponseContext response_context = 1;
+
+  ApiKey api_key = 2;
+}
+
+message UpdateApiKeyRequest {
+  context.RequestContext request_context = 1;
+
+  string id = 2;
+
+  string label = 3;
+
+  repeated capability.Capability capability = 4;
+
+  bool visible_to_developers = 5;
+
+  repeated Visibility visibility = 6;
+}
+
+message UpdateApiKeyResponse {
+  context.ResponseContext response_context = 1;
+}
+
+message DeleteApiKeyRequest {
+  context.RequestContext request_context = 1;
+
+  string id = 2;
+}
+
+message DeleteApiKeyResponse {
+  context.ResponseContext response_context = 1;
+}
+
+message CreateImpersonationApiKeyRequest {
+  context.RequestContext request_context = 1;
+}
+
+message CreateImpersonationApiKeyResponse {
+  context.ResponseContext response_context = 1;
+
+  ApiKey api_key = 2;
+}

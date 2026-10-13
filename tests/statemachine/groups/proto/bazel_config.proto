@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+import "proto/api_key.proto";
+import "proto/context.proto";
+
+package bazel_config;
+
+message ConfigOption {
+  string body = 1;
+
+  string option_lifecycle = 2;
+
+  string flag_name = 3;
+
+  string flag_value = 4;
+}
+
+message GetBazelConfigRequest {
+  context.RequestContext request_context = 1;
+
+  string host = 2;
+
+  string protocol = 3;
+
+  bool include_certificate = 4;
+}
+
+message GetBazelConfigResponse {
+  context.ResponseContext response_context = 1;
+
+  repeated ConfigOption config_option = 2;
+
+  reserved 3;
+
+  repeated Credentials credential = 4;
+}
+
+message Credentials {
+  api_key.ApiKey api_key = 1;
+
+  Certificate certificate = 2;
+}
+
+message Certificate {
+  string cert = 1;
+
+  string key = 2;
+}
