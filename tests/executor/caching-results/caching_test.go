@@ -188,3 +188,37 @@ func TestSkipLookupDoesNotWriteIneligibleResults(t *testing.T) {
 		})
 	}
 }
+
+// Cache lookup must faithfully return a manually cached nonzero exit code.
+// A forced execution must replace that entry with the successful real result.
+func TestCachedFailureResponse(t *testing.T) {
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
+	c := f.Clients(harness.App)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	instance := "cached-failure"
+	d := action(t, ctx, c, instance, nonce+"exit 0", false, 20*time.Second)
+	seed, err := c.Upload(ctx, instance, []byte("cached failure output\n"))
+	require.NoError(t, err)
+	want := &repb.ActionResult{ExitCode: 17, OutputFiles: []*repb.OutputFile{{Path: "nonce.txt", Digest: seed}}}
+	_, err = c.AC.UpdateActionResult(ctx, &repb.UpdateActionResultRequest{InstanceName: instance, ActionDigest: d, DigestFunction: repb.DigestFunction_SHA256, ActionResult: want})
+	require.NoError(t, err)
+	for i := 0; i < 2; i++ {
+		hit := execute(t, ctx, c, instance, d, false)
+		require.Zero(t, hit.GetStatus().GetCode())
+		require.True(t, hit.CachedResult)
+		require.Equal(t, want.ExitCode, hit.Result.ExitCode)
+		require.Len(t, hit.Result.OutputFiles, 1)
+		require.True(t, proto.Equal(want.OutputFiles[0], hit.Result.OutputFiles[0]))
+	}
+	fresh := execute(t, ctx, c, instance, d, true)
+	require.Zero(t, fresh.GetStatus().GetCode())
+	require.Zero(t, fresh.Result.ExitCode)
+	require.False(t, fresh.CachedResult)
+	require.Len(t, fresh.Result.OutputFiles, 1)
+	require.False(t, proto.Equal(seed, fresh.Result.OutputFiles[0].Digest))
+	hit := execute(t, ctx, c, instance, d, false)
+	require.True(t, hit.CachedResult)
+	require.Zero(t, hit.Result.ExitCode)
+	require.True(t, proto.Equal(fresh.Result.OutputFiles[0].Digest, hit.Result.OutputFiles[0].Digest))
+}
