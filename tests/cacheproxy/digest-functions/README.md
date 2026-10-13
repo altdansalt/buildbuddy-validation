@@ -31,3 +31,19 @@ Contract/source references:
 - [Supported digest functions in v2.314.0](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/server/remote_cache/digest/digest.go).
 - [Capabilities forwarding in v2.314.0](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/capabilities_server_proxy/capabilities_server_proxy.go).
 - [CAS forwarding in v2.314.0](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/content_addressable_storage_server_proxy/content_addressable_storage_server_proxy.go).
+
+Round 2 adds 16 MiB streamed uploads for every advertised function and a 256 MiB
+BLAKE3 upload, checking committed size, full contents on app/proxy, repeated
+proxy reads, and existence. Streaming comparisons avoid accumulating responses.
+`TestSeededDigestAgreement` checks 12 pseudorandom blobs across all five functions
+before upload, after upload via a seeded choice of endpoint, and on repeated
+reads: existence, batch statuses/data, and ByteStream contents must agree.
+Replay operation order with `--test_arg=-digest_property_seed=314159` (default).
+The fixed corpus uses SHA256 counter-mode bytes, with sizes around block/chunk
+boundaries. BLAKE3 oracles are generated independently by
+`generate_vectors.py` using Python `blake3==1.0.11`; Python is only needed to
+regenerate vectors, never to run tests. No shared dependency changes are needed.
+Unsupported MD5/VSO/MURMUR3/SHA256TREE and out-of-range positive/negative enum values
+must reject writes with INVALID_ARGUMENT or UNIMPLEMENTED; existence/read
+status codes must agree between app and proxy. MD5 uses a correctly sized hash.
+UNKNOWN (omitted function) is covered by the property with SHA256 inference.

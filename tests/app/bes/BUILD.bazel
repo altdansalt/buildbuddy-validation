@@ -1,0 +1,108 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "regression",
+    size = "large",
+    timeout = "long",
+    srcs = ["bes_test.go"],
+    tags = ["local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_google_uuid//:go_default_library",
+        "@org_golang_google_genproto//googleapis/devtools/build/v1:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+        "@org_golang_google_protobuf//types/known/anypb:go_default_library",
+    ],
+)
+
+go_test(
+    name = "fresh_offset",
+    size = "large",
+    timeout = "long",
+    srcs = ["bes_test.go", "offset_test.go"],
+    args = ["-test.run=^TestFreshInvocationOffset$$"],
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_google_uuid//:go_default_library",
+        "@org_golang_google_genproto//googleapis/devtools/build/v1:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+        "@org_golang_google_protobuf//types/known/anypb:go_default_library",
+    ],
+)
+
+go_test(
+    name = "changed_identity",
+    size = "large",
+    timeout = "long",
+    srcs = ["bes_test.go", "identity_test.go"],
+    args = ["-test.run=^TestChangedStreamIdentity$$"],
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_google_uuid//:go_default_library",
+        "@org_golang_google_genproto//googleapis/devtools/build/v1:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+        "@org_golang_google_protobuf//types/known/anypb:go_default_library",
+    ],
+)
+
+go_test(
+    name = "round2",
+    size = "large",
+    timeout = "long",
+    srcs = ["bes_test.go", "round2_test.go"],
+    args = ["-test.run=^(TestRound2|TestMessageSizeBoundary)$$"],
+    tags = ["local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_google_uuid//:go_default_library",
+        "@org_golang_google_genproto//googleapis/devtools/build/v1:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+        "@org_golang_google_protobuf//types/known/anypb:go_default_library",
+    ],
+)
+
+go_test(
+    name = "invalid_sequence_code",
+    size = "large",
+    timeout = "long",
+    srcs = ["bes_test.go", "codes_test.go"],
+    args = ["-test.run=^TestInvalidSequenceCode$$"],
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_google_uuid//:go_default_library",
+        "@org_golang_google_genproto//googleapis/devtools/build/v1:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+        "@org_golang_google_protobuf//types/known/anypb:go_default_library",
+    ],
+)
+
+go_test(
+    name = "mixed_identity_persistence",
+    size = "large",
+    timeout = "long",
+    srcs = ["bes_test.go", "round2_test.go", "persistence_test.go"],
+    args = ["-test.run=^TestMixedIdentityPersistence$$"],
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_google_uuid//:go_default_library",
+        "@org_golang_google_genproto//googleapis/devtools/build/v1:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+        "@org_golang_google_protobuf//types/known/anypb:go_default_library",
+    ],
+)

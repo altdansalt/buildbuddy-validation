@@ -14,6 +14,11 @@ import (
 
 func execute(t *testing.T, c *harness.Clients, root *repb.Directory, script string) *repb.ExecuteResponse {
 	t.Helper()
+	return executeAfter(t, c, root, script, nil)
+}
+
+func executeAfter(t *testing.T, c *harness.Clients, root *repb.Directory, script string, ready func()) *repb.ExecuteResponse {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	rd, err := c.UploadProto(ctx, "input-tree", root)
@@ -22,6 +27,9 @@ func execute(t *testing.T, c *harness.Clients, root *repb.Directory, script stri
 	require.NoError(t, err)
 	ad, err := c.UploadProto(ctx, "input-tree", &repb.Action{CommandDigest: cmd, InputRootDigest: rd, Timeout: durationpb.New(30 * time.Second), DoNotCache: true})
 	require.NoError(t, err)
+	if ready != nil {
+		ready()
+	}
 	stream, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: "input-tree", ActionDigest: ad, SkipCacheLookup: true, DigestFunction: repb.DigestFunction_SHA256})
 	require.NoError(t, err)
 	for {

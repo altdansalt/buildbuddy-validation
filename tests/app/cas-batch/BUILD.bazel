@@ -1,0 +1,45 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+DEPS = [
+    "//harness:go_default_library",
+    "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+    "@com_github_stretchr_testify//require:go_default_library",
+    "@org_golang_google_grpc//codes:go_default_library",
+    "@org_golang_google_grpc//status:go_default_library",
+]
+
+go_test(
+    name = "go_default_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["fixture_test.go", "cas_batch_test.go", "round2_test.go"],
+    tags = ["local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "empty_digest_bug_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["fixture_test.go", "edge_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "malformed_digest_bug_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["fixture_test.go", "malformed_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "malformed_zstd_bug_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["fixture_test.go", "compressed_invalid_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)

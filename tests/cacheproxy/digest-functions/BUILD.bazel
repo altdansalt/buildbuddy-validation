@@ -4,7 +4,8 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["digest_test.go"],
+    srcs = ["digest_test.go", "round2_test.go"],
+    embedsrcs = ["large_vectors.json", "random_vectors.json"],
     tags = ["local", "requires-network"],
     deps = [
         "//harness:go_default_library",
