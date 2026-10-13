@@ -38,10 +38,12 @@ starvation guarantee or preemption. The organizations have separate disposable
 API keys; all requests address the fixture-local app.
 
 An abrupt-kill test waits for a command-created marker on each fresh executor,
-sends SIGKILL, and replaces that executor through `AddExecutor`. Five attempts
+sends SIGKILL, and replaces that executor through `AddExecutor`. The five-claim retry budget
 must end with INTERNAL and the scheduler's exhaustion message on the original
-operation. A fresh action must still succeed afterwards. Test-local app lease
-and grace periods are shortened to two seconds for bounded recovery.
+operation. A fresh action must still succeed afterwards. Claims count towards the budget before shell startup, so the test observes both
+fresh command markers and terminal results; it requires at least two injected
+kills and rejects a sixth command start. Test-local app lease and grace periods
+are shortened to two seconds for bounded recovery.
 
 Hedging is supported in this release. With hedge count one and delay zero, six
 additional identical Execute requests must attach to the original operation,
