@@ -105,7 +105,7 @@ func providerFixture(t *testing.T, provider string) *harness.Fixture {
 		Config: map[harness.Component]harness.Config{harness.Executor: {"executor": harness.Config{
 			"docker_socket": "/var/run/docker.sock", "root_directory": filepath.Join(root, "remotebuilds"),
 			"host_root_directory": root, "local_cache_directory": filepath.Join(root, "filecache"),
-			"default_isolation_type": "docker", "default_image": "alpine:3.21.3",
+			"default_isolation_type": "docker", "default_image": "mirror.gcr.io/library/alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c",
 			"docker_network": "action-network", "docker_volumes": []string{extra + ":/conformance-extra:ro"},
 		}}},
 		DockerArgs: map[harness.Component][]string{harness.Executor: {"--volume", socket + ":/var/run/docker.sock", "--volume", root + ":" + root, "--env", "DOCKER_HOST=unix:///var/run/docker.sock"}},

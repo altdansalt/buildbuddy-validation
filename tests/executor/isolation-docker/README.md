@@ -39,8 +39,8 @@ specific gRPC code for Docker registry failures: the REAPI does not standardize
 an image registry error mapping. Invalid network values, in contrast, are
 explicitly rejected as INVALID_ARGUMENT by the released platform parser.
 
-Round 2 adds a real fixture-local authenticated `registry:2.8.3` container.
-`httpd:2.4.62-alpine` generates a bcrypt htpasswd entry for disposable credentials.
+Round 2 adds a real fixture-local authenticated `mirror.gcr.io/library/registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373` container.
+`mirror.gcr.io/library/httpd:2.4.62-alpine@sha256:88c55a4fcc1df6cf9e7b38360fb6a6feb4d5c5cf5a27a9ff38096ae585af707f` generates a bcrypt htpasswd entry for disposable credentials.
 The private daemon permits HTTP registries in its test-owned 10/8 address pool;
 no daemon settings outside this fixture change. Docker login configuration stays
 in a test temporary directory and is never mounted into the executor. Action
@@ -70,8 +70,9 @@ pulls address `localhost:5000`; the runner pushes the same workload through the
 executor's fixture-local IP. Podman uses vfs storage and an explicit insecure
 localhost registry entry; OCI explicitly allows loopback registry addresses.
 Both providers check CAS input access and fresh container filesystem state.
-The private daemon uses `mirror.gcr.io` for Docker Hub pulls to reduce anonymous
-rate-limit exposure.
+All external workload and registry helper images use digest-pinned
+`mirror.gcr.io/library` references. The deliberately nonexistent Alpine tag also
+addresses the mirror. No pull in this area addresses Docker Hub directly.
 
 Follow-up coverage: explicit user cancellation and cancellation during pulls,
 image-auth token expiry, and recycled runners. These tests use fresh runners;

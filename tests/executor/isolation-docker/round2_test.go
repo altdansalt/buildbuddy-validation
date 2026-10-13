@@ -74,7 +74,7 @@ func concurrentIsolation(t *testing.T, f *harness.Fixture) {
 		t.Run(marker, func(t *testing.T) {
 			t.Parallel()
 			script := fmt.Sprintf("set -eu; test ! -e /tmp/concurrent-marker; echo '%s' > /tmp/concurrent-marker; sleep 2; cat /tmp/concurrent-marker; cat sub/input.txt", marker)
-			r := execute(t, f, "alpine:3.21.3", script, "", nil)
+			r := execute(t, f, "mirror.gcr.io/library/alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c", script, "", nil)
 			success(t, r)
 			require.Equal(t, marker+"\nmounted input\n", stdout(t, f, r))
 		})
@@ -83,13 +83,13 @@ func concurrentIsolation(t *testing.T, f *harness.Fixture) {
 
 func timeoutCancellation(t *testing.T, f *harness.Fixture) {
 	// Pre-pull so the deadline tests a running process rather than registry latency.
-	success(t, execute(t, f, "alpine:3.21.3", "echo ready", "", nil))
-	r := executeTimeout(t, f, "alpine:3.21.3", `echo started; sleep 120 & wait`, "", nil, 3*time.Second)
+	success(t, execute(t, f, "mirror.gcr.io/library/alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c", "echo ready", "", nil))
+	r := executeTimeout(t, f, "mirror.gcr.io/library/alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c", `echo started; sleep 120 & wait`, "", nil, 3*time.Second)
 	require.EqualValues(t, 4, r.GetStatus().GetCode(), "%v", r.GetStatus())
 	require.Contains(t, stdout(t, f, r), "started")
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		remaining := docker(t, "ps", "-a", "--filter", "ancestor=alpine:3.21.3", "--format", "{{.ID}} {{.Status}}")
+		remaining := docker(t, "ps", "-a", "--filter", "ancestor=mirror.gcr.io/library/alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c", "--format", "{{.ID}} {{.Status}}")
 		if remaining == "" {
 			break
 		}
@@ -98,7 +98,7 @@ func timeoutCancellation(t *testing.T, f *harness.Fixture) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	r = execute(t, f, "alpine:3.21.3", "echo recovered", "", nil)
+	r = execute(t, f, "mirror.gcr.io/library/alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c", "echo recovered", "", nil)
 	success(t, r)
 	require.Equal(t, "recovered\n", stdout(t, f, r))
 }
@@ -125,7 +125,7 @@ func TestAlternativeIsolationProviders(t *testing.T) {
 			// Share only the executor's network namespace: image pulls stay local and
 			// need no outbound networking from this nested privileged fixture.
 			name := "provider-registry"
-			docker(t, "run", "-d", "--name", name, "--network", "container:"+executor, "registry:2.8.3")
+			docker(t, "run", "-d", "--name", name, "--network", "container:"+executor, "mirror.gcr.io/library/registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373")
 			t.Cleanup(func() {
 				if out := os.Getenv("TEST_UNDECLARED_OUTPUTS_DIR"); out != "" {
 					require.NoError(t, os.WriteFile(filepath.Join(out, provider+"-registry.log"), []byte(docker(t, "logs", name)), 0600))
@@ -144,9 +144,9 @@ func TestAlternativeIsolationProviders(t *testing.T) {
 				}
 				time.Sleep(200 * time.Millisecond)
 			}
-			docker(t, "pull", "alpine:3.21.3")
+			docker(t, "pull", "mirror.gcr.io/library/alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c")
 			image := ip + ":5000/provider:workload"
-			docker(t, "tag", "alpine:3.21.3", image)
+			docker(t, "tag", "mirror.gcr.io/library/alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c", image)
 			docker(t, "push", image)
 			if provider == "podman" {
 				docker(t, "exec", executor, "/bin/sh", "-c", `mkdir -p /etc/containers/registries.conf.d; printf '[[registry]]\nlocation = "localhost:5000"\ninsecure = true\n' > /etc/containers/registries.conf.d/fixture.conf`)

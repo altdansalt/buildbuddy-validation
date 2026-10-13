@@ -10,9 +10,9 @@ func TestPrivateImageCacheRejectsWrongCredentials(t *testing.T) {
 	registry, valid := localRegistry(t, f)
 	config := valid["test-registry-config"]
 	delete(valid, "test-registry-config")
-	docker(t, "pull", "alpine:3.21.3")
+	docker(t, "pull", "mirror.gcr.io/library/alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c")
 	image := registry + "/private:workload"
-	docker(t, "tag", "alpine:3.21.3", image)
+	docker(t, "tag", "mirror.gcr.io/library/alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c", image)
 	docker(t, "--config", config, "push", image)
 	t.Logf("private workload digest: %s", docker(t, "image", "inspect", image, "--format", "{{index .RepoDigests 0}}"))
 	docker(t, "image", "rm", image)

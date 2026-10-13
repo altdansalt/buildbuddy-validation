@@ -25,12 +25,12 @@ func docker(t *testing.T, args ...string) string {
 func localRegistry(t *testing.T, f *harness.Fixture) (string, map[string]string) {
 	t.Helper()
 	dir := t.TempDir()
-	docker(t, "pull", "httpd:2.4.62-alpine")
-	hash := docker(t, "run", "--rm", "httpd:2.4.62-alpine", "htpasswd", "-Bbn", "fixture", "disposable-password")
+	docker(t, "pull", "mirror.gcr.io/library/httpd:2.4.62-alpine@sha256:88c55a4fcc1df6cf9e7b38360fb6a6feb4d5c5cf5a27a9ff38096ae585af707f")
+	hash := docker(t, "run", "--rm", "mirror.gcr.io/library/httpd:2.4.62-alpine@sha256:88c55a4fcc1df6cf9e7b38360fb6a6feb4d5c5cf5a27a9ff38096ae585af707f", "htpasswd", "-Bbn", "fixture", "disposable-password")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "htpasswd"), []byte(hash+"\n"), 0644))
 	docker(t, "run", "-d", "--name", "round2-registry", "--network", f.Network,
 		"-v", dir+":/auth:ro", "-e", "REGISTRY_AUTH=htpasswd", "-e", "REGISTRY_AUTH_HTPASSWD_REALM=fixture",
-		"-e", "REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd", "registry:2.8.3")
+		"-e", "REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd", "mirror.gcr.io/library/registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373")
 	t.Cleanup(func() {
 		if out := os.Getenv("TEST_UNDECLARED_OUTPUTS_DIR"); out != "" {
 			logs := docker(t, "logs", "round2-registry")
@@ -61,7 +61,7 @@ func localRegistry(t *testing.T, f *harness.Fixture) (string, map[string]string)
 func pushVariant(t *testing.T, registry, config, version string) string {
 	t.Helper()
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM alpine:3.21.3\nRUN echo "+version+" > /image-version && addgroup -g 23456 namedgroup && adduser -D -u 12345 -G namedgroup nameduser\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM mirror.gcr.io/library/alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c\nRUN echo "+version+" > /image-version && addgroup -g 23456 namedgroup && adduser -D -u 12345 -G namedgroup nameduser\n"), 0644))
 	image := registry + "/conformance:mutable"
 	docker(t, "build", "--network=none", "-t", image, dir)
 	docker(t, "--config", config, "push", image)
