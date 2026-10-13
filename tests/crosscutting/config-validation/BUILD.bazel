@@ -10,10 +10,10 @@ go_test(
 )
 
 go_test(
-    name = "unknown_key_bug_test",
+    name = "unknown_key_test",
     srcs = ["helpers_test.go", "unknown_key_test.go"],
     size = "large",
     timeout = "long",
-    tags = ["bug", "local", "requires-network"],
+    tags = ["local", "requires-network"],
     deps = ["//harness:go_default_library"],
 )
