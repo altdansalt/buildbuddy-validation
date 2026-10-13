@@ -27,3 +27,28 @@ Run the multi-chunk log pagination reproducer:
 ```sh
 GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/invocations-api:log_pagination_bug_test --test_tag_filters=bug --nocache_test_results --test_output=all
 ```
+
+Round 2 regression coverage adds:
+
+- A premature BES half-close and a transport cancellation, each observed as
+  partial before interruption and disconnected afterwards. A sequence-1 replay
+  completes the same invocation and replaces the abandoned attempt's log. A
+  suffix retry after completion leaves its status and log intact.
+- Four concurrent readers calling UI GetInvocation, GetTarget and
+  SearchInvocation while BES uploads 257 test targets. Reads must succeed and
+  GetInvocation must remain partial until the stream finishes.
+- All 257 target labels across the UI's 12-target pages, checking total counts,
+  duplicate labels, token progress and termination. The public v1 GetTarget
+  listing must return all targets (the released implementation does not paginate
+  that endpoint).
+
+All RPC streams have bounded contexts and HTTP calls use the harness or an
+explicit client timeout. No shared deployment is contacted by component calls.
+
+Round 2 validated against the default app digest in
+[the passing area suite](https://app.buildbuddy.io/invocation/761fe64e-3781-4711-ab23-4c132ecc90ec).
+The runner used `bb remote --runner_exec_properties=init-dockerd=true test
+//tests/app/invocations-api/... --config=nobug --test_output=all` after an owned
+fixture daemon encountered Docker Hub's unauthenticated Redis pull rate limit.
+No new product finding was observed in these cases; the round 1 log pagination
+reproducer remains excluded by `--config=nobug`.
