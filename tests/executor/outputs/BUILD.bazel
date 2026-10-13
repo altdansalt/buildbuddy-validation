@@ -43,3 +43,39 @@ go_test(
     tags = ["bug", "local", "requires-network"],
     deps = DEPS,
 )
+
+go_test(
+    name = "round2",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "round2_test.go"],
+    tags = ["local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "requested_mtime",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "mtime_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "overlapping_file",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "overlap_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "overlapping_directories",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "overlap_dirs_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
