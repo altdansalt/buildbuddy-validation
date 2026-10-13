@@ -83,13 +83,12 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'
 func TestSeededProcessTreeTermination(t *testing.T) {
 	for _, isolation := range []string{"bare", "docker"} {
 		t.Run(isolation, func(t *testing.T) {
-			var f *harness.Fixture
+			// Own the daemon in both modes so independent Docker exec probes use
+			// the same socket as the fixture, including when no system daemon runs.
+			f := dockerFixture(t)
 			var props []*repb.Platform_Property
 			if isolation == "docker" {
-				f = dockerFixture(t)
 				props = dockerProps()
-			} else {
-				f = startFixture(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
 			}
 			ctx, stop := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer stop()
