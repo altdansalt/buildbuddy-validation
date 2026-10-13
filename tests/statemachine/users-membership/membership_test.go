@@ -14,8 +14,8 @@ import (
 )
 
 type identity struct {
-	web            *harness.WebSession
-	uid, home, key string
+	web                       *harness.WebSession
+	uid, home, key, manageKey string
 }
 
 func mustHTTP(t *testing.T, w *harness.WebSession, method string, req map[string]any) map[string]any {
@@ -33,21 +33,29 @@ func createIdentity(t *testing.T, f *harness.Fixture, p *issuer, name string) *i
 	w := login(t, f, p, name)
 	created := mustHTTP(t, w, "CreateUser", map[string]any{})
 	uid := stringValue(object(object(created["displayUser"])["userId"])["id"])
+	if object(created["displayUser"])["email"] != name+"@membership.test" {
+		t.Fatalf("created profile differs from OIDC identity: %v", created)
+	}
 	if uid == "" {
 		t.Fatalf("missing created user: %v", created)
 	}
 	w.UserID = map[string]any{"id": uid}
+	_, repeatErr := w.RPC("CreateUser", map[string]any{})
+	if repeatErr == nil || !strings.Contains(repeatErr.Error(), "code = FailedPrecondition") {
+		t.Fatalf("repeat CreateUser should preserve identity and reject recreation: %v", repeatErr)
+	}
 	got := mustHTTP(t, w, "GetUser", map[string]any{})
-	if stringValue(object(object(got["displayUser"])["userId"])["id"]) != uid {
+	if stringValue(object(object(got["displayUser"])["userId"])["id"]) != uid ||
+		object(got["displayUser"])["email"] != name+"@membership.test" {
 		t.Fatal("created user differs from GetUser")
 	}
 	home := stringValue(mustHTTP(t, w, "CreateGroup", map[string]any{"name": name + " home", "urlIdentifier": name + "-home", "userOwnedKeysEnabled": true})["id"])
 	w.GroupID = home
-	key := stringValue(object(mustHTTP(t, w, "CreateApiKey", map[string]any{"requestContext": w.RequestContext(home), "userId": uid, "label": "identity reader", "capability": []string{"ORG_ADMIN", "CACHE_WRITE", "CAS_WRITE"}})["apiKey"])["value"])
+	key := stringValue(object(mustHTTP(t, w, "CreateUserApiKey", map[string]any{"requestContext": w.RequestContext(home), "userId": uid, "label": "identity reader", "capability": []string{"CACHE_WRITE", "CAS_WRITE"}})["apiKey"])["value"])
 	if key == "" {
 		t.Fatal("empty local user key")
 	}
-	return &identity{w, uid, home, key}
+	return &identity{web: w, uid: uid, home: home, key: key}
 }
 
 // The reference model tracks just the target organization. The home group
@@ -191,12 +199,34 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 		if err = compareUserHTTP(r, id.uid, gid, expected); err != nil {
 			return err
 		}
-		g, err := rpc(conn, id.key, "GetUser", bytesField(2, requestContext(id.uid, gid)))
+		if id == member {
+			// A real authenticated organization read must enforce the current
+			// role, independently of the UI's advertised allowedRpc list.
+			_, readErr := id.web.RPC("GetGroupUsers", map[string]any{
+				"requestContext": id.web.RequestContext(gid), "groupId": gid,
+				"groupMembershipStatus": []string{"MEMBER", "REQUESTED"},
+			})
+			if expected.status == 1 && expected.role == 2 {
+				if readErr != nil {
+					return fmt.Errorf("admin member read: %w", readErr)
+				}
+			} else if readErr == nil || !strings.Contains(readErr.Error(), "code = PermissionDenied") {
+				return fmt.Errorf("nonadmin organization read should be denied: %v", readErr)
+			}
+		}
+		g, err := rpc(conn, id.key, "GetUser", bytesField(2, requestContext(id.uid, "")))
 		if err != nil {
-			return err
+			return fmt.Errorf("gRPC GetUser uid=%s: %w", id.uid, err)
 		}
 		if err = compareUserGRPC(g, id.uid, gid, expected); err != nil {
 			return err
+		}
+		display, err := decode(first(g, 1))
+		if err != nil {
+			return err
+		}
+		if string(first(display, 4)) != stringValue(object(r["displayUser"])["email"]) {
+			return fmt.Errorf("identity email differs across HTTP and gRPC")
 		}
 		// Public group metadata remains stable across every membership transition.
 		r, err = id.web.RPC("GetGroup", map[string]any{"urlIdentifier": "membership-target"})
@@ -241,6 +271,9 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 				continue
 			}
 			count++
+			if object(u["user"])["email"] != "member@membership.test" {
+				return fmt.Errorf("HTTP roster identity profile differs: %v", u)
+			}
 			expectedStatus := "MEMBER"
 			if m.status == 2 {
 				expectedStatus = "REQUESTED"
@@ -256,7 +289,7 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 		if count != wantCount {
 			return fmt.Errorf("HTTP filtered roster count %d want %d", count, wantCount)
 		}
-		g, err := rpc(conn, admin.key, "GetGroupUsers", join(bytesField(1, requestContext(admin.uid, gid)), text(2, gid), bytesField(3, packed)))
+		g, err := rpc(conn, admin.manageKey, "GetGroupUsers", join(bytesField(1, requestContext(admin.uid, gid)), text(2, gid), bytesField(3, packed)))
 		if err != nil {
 			return err
 		}
@@ -278,6 +311,9 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 				continue
 			}
 			count++
+			if string(first(d, 4)) != "member@membership.test" {
+				return fmt.Errorf("gRPC roster identity profile differs")
+			}
 			if string(first(u, 2)) != fmt.Sprint(m.status) || string(first(u, 3)) != fmt.Sprint(m.role) {
 				return fmt.Errorf("gRPC roster role/status differs from %+v: %v", m, u)
 			}
@@ -291,13 +327,12 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 func TestMembershipStateMachine(t *testing.T) {
 	p := startIssuer(t)
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}, SkipAuthBootstrap: true,
-		DockerArgs: map[harness.Component][]string{harness.App: {"--add-host=host.docker.internal:host-gateway"}},
-		Config:     map[harness.Component]harness.Config{harness.App: {"auth": harness.Config{"enable_self_auth": false, "disable_refresh_token": true, "oauth_providers": []any{harness.Config{"issuer_url": p.url, "client_id": "membership-client", "client_secret": "fixture-secret"}}}, "app": harness.Config{"create_group_per_user": false, "user_owned_keys_enabled": true}}}})
+		Config: map[harness.Component]harness.Config{harness.App: {"auth": harness.Config{"enable_self_auth": false, "disable_refresh_token": true, "oauth_providers": []any{harness.Config{"issuer_url": p.url, "client_id": "membership-client", "client_secret": "fixture-secret"}}}, "app": harness.Config{"create_group_per_user": false, "user_owned_keys_enabled": true}}}})
 	admin := createIdentity(t, f, p, "admin")
 	member := createIdentity(t, f, p, "member")
-	gid := stringValue(mustHTTP(t, admin.web, "CreateGroup", map[string]any{"name": "Membership target", "urlIdentifier": "membership-target", "userOwnedKeysEnabled": true})["id"])
+	gid := stringValue(mustHTTP(t, admin.web, "CreateGroup", map[string]any{"requestContext": admin.web.RequestContext(admin.home), "name": "Membership target", "urlIdentifier": "membership-target", "userOwnedKeysEnabled": true})["id"])
 	// The admin key must belong to the target organization for organization reads.
-	admin.key = stringValue(object(mustHTTP(t, admin.web, "CreateApiKey", map[string]any{"requestContext": admin.web.RequestContext(gid), "userId": admin.uid, "label": "target admin", "capability": []string{"ORG_ADMIN", "CACHE_WRITE", "CAS_WRITE"}})["apiKey"])["value"])
+	admin.manageKey = stringValue(object(mustHTTP(t, admin.web, "CreateApiKey", map[string]any{"requestContext": admin.web.RequestContext(gid), "userId": admin.uid, "label": "target admin", "capability": []string{"ORG_ADMIN"}})["apiKey"])["value"])
 	conn := f.Clients(harness.App).Conn
 	state := model{}
 	check(t, conn, admin, member, gid, state)
@@ -310,6 +345,7 @@ func TestMembershipStateMachine(t *testing.T) {
 	}{
 		{name: "request", join: true, want: model{2, 1}},
 		{name: "repeat-request", join: true, repeat: true, want: model{2, 1}},
+		{name: "pending-reader-role", role: 8, want: model{2, 8}},
 		{name: "cancel-request", action: 2, want: model{}},
 		{name: "repeat-remove", action: 2, want: model{}},
 		{name: "request-again", join: true, want: model{2, 1}},
@@ -338,7 +374,12 @@ func TestMembershipStateMachine(t *testing.T) {
 				if s.role != 0 {
 					update = append(update, number(3, uint64(s.role))...)
 				}
-				_, err = rpc(conn, admin.key, "UpdateGroupUsers", join(bytesField(1, requestContext(admin.uid, gid)), text(2, gid), bytesField(3, update)))
+				updates := bytesField(3, update)
+				if s.name == "writer" {
+					// Batch updates must preserve the independently modeled admin.
+					updates = append(updates, bytesField(3, join(bytesField(1, text(1, admin.uid)), number(3, 2)))...)
+				}
+				_, err = rpc(conn, admin.manageKey, "UpdateGroupUsers", join(bytesField(1, requestContext(admin.uid, gid)), text(2, gid), updates))
 			}
 			if s.repeat {
 				if status.Code(err) != codes.AlreadyExists {
@@ -351,11 +392,38 @@ func TestMembershipStateMachine(t *testing.T) {
 			check(t, conn, admin, member, gid, state)
 		})
 	}
+	// Configure an owned-domain join policy using the ordinary UI setting.
+	// JoinGroup then establishes membership directly instead of requesting it.
+	mustHTTP(t, admin.web, "UpdateGroup", map[string]any{
+		"requestContext": admin.web.RequestContext(gid), "id": gid,
+		"name": "Membership target", "urlIdentifier": "membership-target",
+		"autoPopulateFromOwnedDomain": true, "userOwnedKeysEnabled": true,
+	})
+	for i := 0; i < 2; i++ {
+		_, err := rpc(conn, member.key, "JoinGroup", join(text(1, gid), bytesField(2, requestContext(member.uid, member.home))))
+		if err != nil {
+			t.Fatalf("owned-domain join %d: %v", i, err)
+		}
+		state = model{1, 1}
+		check(t, conn, admin, member, gid, state)
+		if i == 0 {
+			_, err = rpc(conn, admin.manageKey, "UpdateGroupUsers", join(bytesField(1, requestContext(admin.uid, gid)), text(2, gid), bytesField(3, join(bytesField(1, text(1, member.uid)), number(2, 2)))))
+			if err != nil {
+				t.Fatal(err)
+			}
+			state = model{}
+			check(t, conn, admin, member, gid, state)
+		}
+	}
+	_, err := rpc(conn, admin.manageKey, "UpdateGroupUsers", join(bytesField(1, requestContext(admin.uid, gid)), text(2, gid), bytesField(3, join(bytesField(1, text(1, member.uid)), number(2, 2)))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = model{}
+	check(t, conn, admin, member, gid, state)
 	// Re-login the removed user: a fresh session must see the same state.
 	member.web = login(t, f, p, "member")
 	member.web.UserID = map[string]any{"id": member.uid}
 	check(t, conn, admin, member, gid, state)
 	t.Logf("images: app=%s", f.Endpoint(harness.App).Image)
 }
-
-var _ = strings.Contains

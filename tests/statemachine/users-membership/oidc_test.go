@@ -42,7 +42,16 @@ func startIssuer(t *testing.T) *issuer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &issuer{url: fmt.Sprintf("http://host.docker.internal:%d", ln.Addr().(*net.TCPAddr).Port), key: key, codes: map[string]string{}}
+	// UDP connect selects the host interface without sending any packet. The
+	// documentation-only destination is never used by the HTTP/OIDC fixture.
+	route, err := net.Dial("udp4", "192.0.2.1:9")
+	if err != nil {
+		ln.Close()
+		t.Fatal(err)
+	}
+	hostIP := route.LocalAddr().(*net.UDPAddr).IP.String()
+	route.Close()
+	p := &issuer{url: fmt.Sprintf("http://%s:%d", hostIP, ln.Addr().(*net.TCPAddr).Port), key: key, codes: map[string]string{}}
 	s := &http.Server{Handler: http.HandlerFunc(p.serve), ReadHeaderTimeout: 5 * time.Second}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -140,7 +149,7 @@ func login(t *testing.T, f *harness.Fixture, p *issuer, id string) *harness.WebS
 		}
 	}
 	if !found {
-		t.Fatalf("OIDC %s login failed: HTTP %d", id, res.StatusCode)
+		t.Fatalf("OIDC %s login failed: HTTP %d final URL %s", id, res.StatusCode, res.Request.URL)
 	}
 	return w
 }
