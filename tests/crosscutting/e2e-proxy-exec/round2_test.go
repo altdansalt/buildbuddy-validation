@@ -132,14 +132,31 @@ outputs(name="structured", src="input")
 		}))
 		return snapshot
 	}
+	// Bazel makes downloaded tree artifacts read-only. Restore directory write
+	// permission before testing.TempDir removes them; never follow symlinks.
+	outputBase := func(t *testing.T) string {
+		out := t.TempDir()
+		t.Cleanup(func() {
+			require.NoError(t, filepath.WalkDir(out, func(path string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if d.IsDir() {
+					return os.Chmod(path, 0700)
+				}
+				return nil
+			}))
+		})
+		return out
+	}
 	yes, no := true, false
 	verify := func(t *testing.T, targets []string) {
-		baseline := check(t, run(t.TempDir(), targets, false), &no)
-		cached := check(t, run(t.TempDir(), targets, true), &yes)
+		baseline := check(t, run(outputBase(t), targets, false), &no)
+		cached := check(t, run(outputBase(t), targets, true), &yes)
 		require.Equal(t, baseline, cached, "fresh cached rebuild differs from no-cache execution")
 	}
 	t.Run("concurrent-same", func(t *testing.T) {
-		outs := []string{t.TempDir(), t.TempDir()}
+		outs := []string{outputBase(t), outputBase(t)}
 		results := make(chan buildResult, 2)
 		for _, out := range outs {
 			go func(out string) { results <- run(out, []string{"//:left"}, true) }(out)
@@ -149,7 +166,7 @@ outputs(name="structured", src="input")
 		verify(t, []string{"//:left"})
 	})
 	t.Run("concurrent-overlap", func(t *testing.T) {
-		outs := []string{t.TempDir(), t.TempDir()}
+		outs := []string{outputBase(t), outputBase(t)}
 		results := make(chan buildResult, 2)
 		for i, out := range outs {
 			target := []string{"//:left", "//:right"}[i]
@@ -160,7 +177,7 @@ outputs(name="structured", src="input")
 		verify(t, []string{"//:left", "//:right"})
 	})
 	t.Run("cancel-rebuild", func(t *testing.T) {
-		cmd := command(t.TempDir(), []string{"//:slow"}, false)
+		cmd := command(outputBase(t), []string{"//:slow"}, false)
 		var output bytes.Buffer
 		cmd.Stdout = &output
 		cmd.Stderr = &output
@@ -186,9 +203,23 @@ outputs(name="structured", src="input")
 	for _, component := range []harness.Component{harness.CacheProxy, harness.App, harness.Executor} {
 		t.Run("restart-"+string(component), func(t *testing.T) {
 			targets := []string{"//:left", "//:right", "//:structured"}
-			before := check(t, run(t.TempDir(), targets, false), &no)
+			before := check(t, run(outputBase(t), targets, false), &no)
 			output, err := docker("restart", f.Endpoint(component).Container)
 			require.NoError(t, err, "%s", output)
+			// Docker can assign new ephemeral host ports on restart. Container DNS
+			// names and internal ports stay stable, but host clients must refresh.
+			inspect, err := docker("inspect", "--format", "{{json .NetworkSettings.Ports}}", f.Endpoint(component).Container)
+			require.NoError(t, err, "%s", inspect)
+			var ports map[string][]struct{ HostPort string }
+			require.NoError(t, json.Unmarshal(inspect, &ports))
+			ep := f.Endpoint(component)
+			require.Len(t, ports["8080/tcp"], 1)
+			ep.HTTP = "http://127.0.0.1:" + ports["8080/tcp"][0].HostPort
+			if component != harness.Executor {
+				require.Len(t, ports["1985/tcp"], 1)
+				ep.GRPC = "127.0.0.1:" + ports["1985/tcp"][0].HostPort
+			}
+			t.Logf("post-restart %s: HTTP=%s gRPC=%s", component, ep.HTTP, ep.GRPC)
 			client := &http.Client{Timeout: time.Second}
 			require.Eventually(t, func() bool {
 				r, err := client.Get(f.Endpoint(component).HTTP + "/readyz?server-type=" + f.Endpoint(component).ServerType)
@@ -198,7 +229,7 @@ outputs(name="structured", src="input")
 				r.Body.Close()
 				return r.StatusCode == 200
 			}, 90*time.Second, 500*time.Millisecond)
-			require.Equal(t, before, check(t, run(t.TempDir(), targets, true), &yes))
+			require.Equal(t, before, check(t, run(outputBase(t), targets, true), &yes))
 			verify(t, targets)
 		})
 	}
