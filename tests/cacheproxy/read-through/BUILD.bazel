@@ -4,7 +4,7 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["read_through_test.go"],
+    srcs = ["read_through_test.go", "round2_test.go", "cdc_test.go"],
     tags = [
         "local",
         "requires-network",
@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//harness:go_default_library",
         "@org_golang_google_genproto_googleapis_bytestream//:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
         "@org_golang_google_grpc//codes:go_default_library",
         "@org_golang_google_grpc//metadata:go_default_library",
         "@org_golang_google_grpc//status:go_default_library",
