@@ -298,15 +298,16 @@ func runSequence(t *testing.T, instance string) {
 			req := wrapperspb.String(fullURI)
 			req.ProtoReflect().SetUnknown(number(number(nil, 2, 3), 3, 19))
 			out := &wrapperspb.BytesValue{}
+			// GetFileRange reads the app's own cache and ignores the URI host.
 			err := app.Conn.Invoke(ctx, "/api.v1.ApiService/GetFileRange", req, out)
-			if visibleCAS {
+			if state.cas {
 				require.NoError(t, err)
 				require.Equal(t, data[3:19], out.Value)
 			} else {
 				require.Equal(t, codes.NotFound, status.Code(err))
 			}
 			rangeCode, rangeBody := httpCall("GetFileRange", map[string]any{"uri": fullURI, "start": "3", "end": "19"})
-			if visibleCAS {
+			if state.cas {
 				require.Equal(t, 200, rangeCode, string(rangeBody))
 				var result map[string]any
 				require.NoError(t, json.Unmarshal(rangeBody, &result))
