@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,6 +97,10 @@ func boolean(b []byte, n protowire.Number) bool { return bytes.Equal(first(b, n)
 type model struct{ user, group, installation, repo, status, defaults bool }
 type driver struct {
 	strict bool
+	ctx    context.Context
+	peer   *grpc.ClientConn
+	keys   []*grpc.ClientConn
+	writes int
 	jwt    string
 	t      *testing.T
 	f      *harness.Fixture
@@ -112,7 +117,7 @@ func (d *driver) request(method string, extra []byte) []byte {
 	return join(str(n, string(d.rc)), extra)
 }
 func (d *driver) grpc(method string, extra []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(d.context(), 5*time.Second)
 	defer cancel()
 	ctx = metadata.AppendToOutgoingContext(ctx, "x-buildbuddy-jwt", d.jwt)
 	req := d.request(method, extra)
@@ -121,7 +126,7 @@ func (d *driver) grpc(method string, extra []byte) ([]byte, error) {
 	return res, err
 }
 func (d *driver) http(method string, extra []byte) ([]byte, error) {
-	req, err := http.NewRequest("POST", d.f.Web.URL+"/rpc/BuildBuddyService/"+method, bytes.NewReader(d.request(method, extra)))
+	req, err := http.NewRequestWithContext(d.context(), "POST", d.f.Web.URL+"/rpc/BuildBuddyService/"+method, bytes.NewReader(d.request(method, extra)))
 	if err != nil {
 		return nil, err
 	}
@@ -178,11 +183,11 @@ func (d *driver) jsonCheck() error {
 		case "GetRepos":
 			req["gitProvider"] = "GITHUB"
 		}
-		result, err := d.f.Web.RPC(method, req)
+		result, err := d.jsonRPC(method, req)
 		denied := (!d.m.user && (method == "GetAccessibleGitHubRepos" || method == "GetGithubUserInstallations" || method == "GetGithubUser")) || (!d.m.group && method == "GetRepos")
 		if denied {
-			if err == nil {
-				return fmt.Errorf("%s JSON unexpectedly accessible", method)
+			if !authDenial(err) {
+				return fmt.Errorf("%s JSON unexpected denial: %v", method, err)
 			}
 			continue
 		}
@@ -229,6 +234,9 @@ func (d *driver) jsonCheck() error {
 				}
 			}
 		case "GetLinkedGitHubRepos":
+			if len(list("repoUrls")) != 0 {
+				return fmt.Errorf("deprecated JSON repoUrls unexpectedly populated")
+			}
 			rows := list("repos")
 			want := 0
 			if d.m.repo {
@@ -271,6 +279,9 @@ func (d *driver) check() error {
 		return err
 	}
 	links := groupLinks(u)
+	if links[d.f.Web.GroupID] {
+		return fmt.Errorf("unrelated org GitHub link changed")
+	}
 	if boolean(u, 7) != d.m.user || links[d.f.GroupID] != d.m.group {
 		return fmt.Errorf("GetUser links user=%v group=%v; model=%+v", boolean(u, 7), links, d.m)
 	}
@@ -303,6 +314,9 @@ func (d *driver) check() error {
 	if err != nil {
 		return err
 	}
+	if len(fields(repos, 2)) != 0 {
+		return fmt.Errorf("deprecated repo_urls unexpectedly populated: %x", repos)
+	}
 	rows = fields(repos, 3)
 	want = 0
 	if d.m.repo {
@@ -314,7 +328,11 @@ func (d *driver) check() error {
 	if want == 1 {
 		r := rows[0]
 		if string(first(r, 1)) != repoURL || boolean(r, 2) != d.m.defaults || boolean(r, 3) != (!d.strict || d.m.installation) {
-			return fmt.Errorf("linked repository does not match model: %x", r)
+			j, err := d.jsonRPC("GetLinkedGitHubRepos", map[string]any{"requestContext": d.f.Web.RequestContext(d.f.GroupID)})
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("linked repository does not match model: %x; HTTP protobuf identical; JSON=%v", r, j)
 		}
 	}
 	if d.m.user {
@@ -341,15 +359,15 @@ func (d *driver) check() error {
 			return fmt.Errorf("GitHub user installation changed on local mutation")
 		}
 	} else {
-		for _, method := range []string{"GetGithubUserInstallations", "GetAccessibleGitHubRepos"} {
+		for _, method := range []string{"GetGithubUser", "GetGithubUserInstallations", "GetAccessibleGitHubRepos"} {
 			extra := []byte(nil)
 			if method == "GetAccessibleGitHubRepos" {
 				extra = num(2, 101)
 			}
 			_, gerr := d.grpc(method, extra)
 			_, herr := d.http(method, extra)
-			if gerr == nil || herr == nil {
-				return fmt.Errorf("%s remains accessible without user token", method)
+			if !authDenial(gerr) || !authDenial(herr) {
+				return fmt.Errorf("%s denial mismatch: grpc=%v http=%v", method, gerr, herr)
 			}
 		}
 	}
@@ -365,22 +383,61 @@ func (d *driver) check() error {
 	} else {
 		_, gerr := d.grpc("GetRepos", num(2, 1))
 		_, herr := d.http("GetRepos", num(2, 1))
-		if gerr == nil || herr == nil {
-			return fmt.Errorf("GetRepos remains accessible without group token")
+		if !authDenial(gerr) || !authDenial(herr) {
+			return fmt.Errorf("GetRepos denial mismatch: grpc=%v http=%v", gerr, herr)
 		}
+	}
+	if err := d.auditReaders(); err != nil {
+		return err
+	}
+	if err := d.contentReaders(); err != nil {
+		return err
+	}
+	if err := d.workflowReaders(); err != nil {
+		return err
+	}
+	if err := d.keyReaders(); err != nil {
+		return err
 	}
 	return d.jsonCheck()
 }
 func (d *driver) converge(step string) {
 	d.t.Helper()
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	d.ctx = ctx
+	defer func() { d.ctx = nil }()
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	var last error
+	lastText := ""
 	for {
-		last = d.check()
+		if ctx.Err() != nil {
+			d.t.Fatalf("%s failed to converge: %v", step, last)
+		}
+		snapshotErr := d.check()
+		if ctx.Err() != nil {
+			d.t.Fatalf("%s failed to converge within %s: %v", step, time.Since(start), last)
+		}
+		last = snapshotErr
+		if last != nil && last.Error() != lastText {
+			lastText = last.Error()
+			d.t.Logf("%s snapshot: %v", step, last)
+		}
 		if last == nil {
+			elapsed := time.Since(start)
+			for i := 0; i < 3; i++ {
+				select {
+				case <-ctx.Done():
+					d.t.Fatal(ctx.Err())
+				case <-ticker.C:
+				}
+				if err := d.check(); err != nil {
+					d.t.Fatalf("%s unstable after %s: %v", step, elapsed, err)
+				}
+			}
+			d.t.Logf("CONVERGENCE %s: %s; stable for %s (3 complete snapshots)", step, elapsed, time.Since(start)-elapsed)
 			return
 		}
 		select {
@@ -392,8 +449,25 @@ func (d *driver) converge(step string) {
 }
 func (d *driver) mutate(method string, extra []byte, update func()) {
 	d.t.Helper()
-	_, err := d.grpc(method, extra)
+	d.writes++
+	if d.writes%2 == 0 {
+		d.conn, d.peer = d.peer, d.conn
+	}
+	var res []byte
+	var err error
+	switch method {
+	case "UpdateGitHubAppInstallation", "UpdateGitHubRepoSettings", "UnlinkGitHubRepo":
+		req := d.request(method, extra)
+		ctx, cancel := context.WithTimeout(d.context(), 5*time.Second)
+		err = d.keys[d.writes%len(d.keys)].Invoke(ctx, "/buildbuddy.service.BuildBuddyService/"+method, &req, &res, grpc.ForceCodec(wireCodec{}))
+		cancel()
+	default:
+		res, err = d.grpc(method, extra)
+	}
 	must(d.t, err)
+	if method == "UnlinkGitHubAccount" && len(fields(res, 2)) != 0 {
+		d.t.Fatalf("mutation warnings: %q", fields(res, 2))
+	}
 	update()
 	d.converge(method)
 }
@@ -449,11 +523,21 @@ func runStateMachine(t *testing.T, strict bool) {
 	token := encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	d := &driver{strict: strict, t: t, f: f, conn: harness.Dial(t, f.Endpoint(harness.App).GRPC, "").Conn, jwt: token, rc: join(str(1, string(str(1, uid))), str(2, f.GroupID))}
 
+	d.peer = harness.Dial(t, f.Endpoint(harness.App).GRPC, "").Conn
+	for _, label := range []string{"github-client-a", "github-client-b"} {
+		key := f.Web.CreateAPIKey(t, f.GroupID, label, []string{"ORG_ADMIN"})
+		d.keys = append(d.keys, harness.Dial(t, f.Endpoint(harness.App).GRPC, key).Conn)
+	}
 	d.converge("initial")
 	d.oauth("/auth/github/link/", true)
 	d.oauth("/auth/github/app/link/", false)
 	install := join(num(2, 101), num(3, 7))
 	d.mutate("LinkGitHubAppInstallation", install, func() { d.m.installation = true; d.m.status = true })
+	if strict {
+		d.mutate("LinkGitHubRepo", str(2, repoURL), func() { d.m.repo = true })
+		d.mutate("UnlinkGitHubAppInstallation", install, func() { d.m.installation = false; d.m.status = false })
+		return
+	}
 	d.mutate("LinkGitHubAppInstallation", install, func() {}) // documented valid re-link
 	for _, enabled := range []uint64{1, 1, 0, 1} {
 		v := enabled
@@ -476,4 +560,75 @@ func runStateMachine(t *testing.T, strict bool) {
 	d.mutate("UnlinkGitHubAccount", num(2, 1), func() { d.m.user = false })
 	d.mutate("UnlinkGitHubAccount", nil, func() { d.m.group = false })
 	d.mutate("UnlinkGitHubAppInstallation", install, func() { d.m.installation = false })
+}
+
+// Audit the code editor's repository reader and settings' install-path reader.
+func (d *driver) auditReaders() error {
+	extra := join(str(2, "fixture-owner"), str(3, "project"))
+	req := map[string]any{"requestContext": d.f.Web.RequestContext(d.f.GroupID), "owner": "fixture-owner", "repo": "project"}
+	if d.m.user {
+		b, err := d.read("GetGithubRepo", extra)
+		if err != nil {
+			return err
+		}
+		if string(first(b, 2)) != "main" {
+			return fmt.Errorf("GetGithubRepo default branch mismatch: %x", b)
+		}
+		j, err := d.jsonRPC("GetGithubRepo", req)
+		if err != nil {
+			return err
+		}
+		if j["defaultBranch"] != "main" {
+			return fmt.Errorf("GetGithubRepo JSON branch mismatch: %v", j)
+		}
+	} else {
+		_, err := d.grpc("GetGithubRepo", extra)
+		code := "NotFound"
+		if d.m.installation {
+			code = "Unauthenticated"
+		}
+		if err == nil || !strings.Contains(err.Error(), "code = "+code) {
+			return fmt.Errorf("GetGithubRepo denial want %s got %v", code, err)
+		}
+		for _, fn := range []func() error{
+			func() error { _, e := d.http("GetGithubRepo", extra); return e },
+			func() error { _, e := d.jsonRPC("GetGithubRepo", req); return e },
+		} {
+			e := fn()
+			if e == nil || (!strings.Contains(e.Error(), "no linked GitHub account") && !strings.Contains(e.Error(), "github account link is required")) {
+				return fmt.Errorf("GetGithubRepo HTTP denial: %v", e)
+			}
+		}
+	}
+	if d.m.user || d.m.installation {
+		b, err := d.read("GetGitHubAppInstallPath", nil)
+		if err != nil {
+			return err
+		}
+		if string(first(b, 2)) != "/auth/github/app/link/" {
+			return fmt.Errorf("install path mismatch: %x", b)
+		}
+		j, err := d.jsonRPC("GetGitHubAppInstallPath", map[string]any{"requestContext": d.f.Web.RequestContext(d.f.GroupID)})
+		if err != nil {
+			return err
+		}
+		if j["installPath"] != "/auth/github/app/link/" {
+			return fmt.Errorf("JSON install path mismatch: %v", j)
+		}
+	} else {
+		_, err := d.grpc("GetGitHubAppInstallPath", nil)
+		if err == nil || !strings.Contains(err.Error(), "code = NotFound") {
+			return fmt.Errorf("install path denial: %v", err)
+		}
+		_, err = d.http("GetGitHubAppInstallPath", nil)
+		if err == nil || !strings.Contains(err.Error(), "no linked GitHub account") {
+			return fmt.Errorf("HTTP install path denial: %v", err)
+		}
+		_, err = d.jsonRPC("GetGitHubAppInstallPath", map[string]any{"requestContext": d.f.Web.RequestContext(d.f.GroupID)})
+		if err == nil || !strings.Contains(err.Error(), "no linked GitHub account") {
+			return fmt.Errorf("JSON install path denial: %v", err)
+		}
+	}
+
+	return nil
 }

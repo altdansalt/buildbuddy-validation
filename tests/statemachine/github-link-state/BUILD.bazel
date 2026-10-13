@@ -2,7 +2,7 @@ load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "go_default_test",
-    srcs = ["state_test.go", "mock_test.go"],
+    srcs = ["state_test.go", "mock_test.go", "readers_test.go"],
     size = "large",
     timeout = "long",
     tags = ["local", "requires-network"],
@@ -16,7 +16,7 @@ go_test(
 
 go_test(
     name = "installation_flag_bug_test",
-    srcs = ["state_test.go", "mock_test.go", "bug_test.go"],
+    srcs = ["state_test.go", "mock_test.go", "readers_test.go", "bug_test.go"],
     size = "large",
     timeout = "long",
     tags = ["bug", "local", "requires-network"],

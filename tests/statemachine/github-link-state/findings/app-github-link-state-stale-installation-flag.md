@@ -66,3 +66,53 @@ is excluded from default CI; run it explicitly with `--test_tag_filters=bug`,
 This finding uses the repository template but is stored inside the item directory
 to comply with the task's edit restriction. Coordinator action: promote it into
 root `findings/` and regenerate INDEX if desired. No harness change is needed.
+
+## Round 2 isolated reproduction
+
+The minimal sequence (valid user OAuth link, installation link, repo link,
+installation unlink) reproduces independently in:
+
+- https://app.buildbuddy.io/invocation/bfb0b0d0-082d-417d-8b24-7397bc2458b3
+- https://app.buildbuddy.io/invocation/30c99860-38d3-428a-8015-836b5aec70e5
+
+Both repeatedly observe the mismatch for the 30s polling bound. Each failed
+snapshot first verifies an empty installation listing; repository gRPC and HTTP
+protobuf are identical and the JSON response explicitly contains
+`readWriteAppInstalled:true`. No mutation warnings occur. The mock verifies user
+Authorization headers, and added content/review readers agree before deletion.
+The final deadline cancels the last snapshot; it is the preceding repeated
+model mismatch, not that cancellation, which establishes the divergence.
+
+```text
+UnlinkGitHubAppInstallation snapshot: linked repository does not match model:
+0a2868747470733a2f2f6769746875622e636f6d2f666978747572652d6f776e65722f70726f6a6563741801;
+HTTP protobuf identical; JSON=map[repos:[map[readWriteAppInstalled:true
+repoUrl:https://github.com/fixture-owner/project]]]
+```
+
+Classification: permanent derived-state error until installation relink or repo
+deletion, not an observed transient delay; no convergence in 30s. The released
+query computes the flag from the persisted repo AppID, so waiting cannot update
+it. This classification combines bounded observation with source inspection,
+not an unbounded timing claim. Non-default config: GitHub App integration must
+be enabled and configured (app ID 7, disposable OAuth credentials/signing key,
+local TLS mock). Default database/cache/auth harness config and pinned image
+are unchanged; no non-default consistency/cache flag is involved.
+
+The ordinary expanded sequence passes and records this known exception:
+https://app.buildbuddy.io/invocation/56620077-467f-44ea-a6fe-9234f4550c80.
+All other modeled mutations agree on their first complete snapshot and remain
+stable for three additional snapshots. Detailed timing is in the verbose test
+log. This does not establish functional OLAP history or migrated legacy-row
+cleanup coverage; see the README's explicit limits.
+
+A third run on the final diagnostic code also reproduces:
+https://app.buildbuddy.io/invocation/dce4f73c-d6ed-4cc0-b454-81e6fc5399b1.
+It preserves the product mismatch in the terminal failure instead of replacing
+it with the canceled final RPC:
+
+```text
+UnlinkGitHubAppInstallation failed to converge within 30.000332089s:
+linked repository does not match model: ...1801;
+HTTP protobuf identical; JSON=map[repos:[map[readWriteAppInstalled:true ...]]]
+```

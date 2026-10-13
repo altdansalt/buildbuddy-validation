@@ -69,10 +69,14 @@ OAuth discovery attempts are blocked by the proxy.
 
 The app uses harness self-auth. gRPC uses its supported signed JWT mechanism,
 with the fixture-only HMAC secret and the same real provisioned user/org-admin
-role as the browser; user-owned API keys cannot grant org-admin capability.
-No host credential is read or forwarded. RPC deadlines are 20s, the browser
-client timeout is 30s, and convergence retries use a 30s deadline and 100ms
-polling ticker, rather than unconditional sleeps. Harness saves image metadata,
+role as the browser; two separately provisioned org-level ORG_ADMIN API keys perform installation
+updates, repo-setting updates and repo deletion. Both keys independently read
+repo and workflow state after every step. User-required mutations alternate
+between two gRPC connections; HTTP uses the same real user via cookies.
+No host credential is read or forwarded. All RPCs and HTTP requests have a maximum 5s deadline nested in a single
+30s convergence context (including JSON calls). After the first complete
+matching snapshot, three more complete snapshots must match on a 100ms ticker.
+Each step logs the observed convergence upper bound and stability duration. Harness saves image metadata,
 configs and container logs.
 
 ## Run
@@ -92,3 +96,70 @@ Validation: [normal target passed](https://app.buildbuddy.io/invocation/d676ee78
 with uncached test execution. The finding records both independent bug reproduction
 invocations, each failing on the same derived repository flag after installation
 unlink.
+
+
+## Round 2: every-step browser inventory and limits
+
+The local audit branch's GetGithubRepo and GetGitHubAppInstallPath checks are
+included with original expectations. No perturbations are retained.
+Every row in the mutation table also checks ALL of these readers over gRPC,
+HTTP protobuf and HTTP JSON after every mutation and OAuth callback:
+
+- GetGithubRepo (default branch) and GetGitHubAppInstallPath (exact path or
+  documented account-not-linked denial).
+- GetGithubContent (downloaded bytes), GetGithubBlob (raw bytes), GetGithubTree
+  (tree SHA), GetGithubCompare (ahead count), GetGithubForks (exact fork owner),
+  GetGithubCommits (exact commit SHA, tree SHA and message).
+- GetGithubPullRequest (empty dashboard) and GetGithubPullRequestDetails
+  (exact PR ID). These run against test-local REST and GraphQL endpoints.
+- GetWorkflows (empty legacy list), GetWorkflowHistory (the precise
+  `database not configured` prerequisite on this SQLite-only fixture).
+
+Positive reads compare gRPC and HTTP protobuf, then independently assert JSON
+model values. When user authorization disappears, every token-dependent reader
+must fail with an account/token-specific denial, rather than accepting any error.
+The mock verifies Authorization presence and the fixture user token on user REST
+and GraphQL calls. It does not simulate remote token revocation: unlinking a
+BuildBuddy record is not a GitHub-side revocation operation. All mutation warning
+fields are asserted empty. The initial, unrelated org's account flag must stay
+false throughout. Deprecated `GetLinkedGitHubRepos.repo_urls` is explicitly
+asserted empty in this release; source deliberately only populates `repos`, and
+no reviewed frontend consumes the deprecated field. Its omission is not claimed
+as a new bug.
+
+Released-source inventory:
+
+| Surface | Source and applicability |
+| --- | --- |
+| Integration settings | enterprise/app/settings/{github_link,user_github_link}.tsx: installation, path, user readers |
+| Code editor | enterprise/app/code/{code,code_v2,code_pull_request}.tsx/.ts: repo, content, tree, blob, compare, forks, commits |
+| Review UI | enterprise/app/review/{review_list,view_pull_request,file_content_service}: dashboard, details, compare, content |
+| Workflow UI | enterprise/app/workflows/{github_app_import,workflows}.tsx: user/install/path and legacy/history readers |
+| HTTP routing | server/libmain/libmain.go:451-465: JSON/protobuf protolet and `/file/download`; the latter downloads invocation/cache artifacts, not link records |
+| Streaming/raw logs | proto/buildbuddy_service.proto: no GitHub link streaming RPC; invocation logs/raw-event JSON expose recorded build data, not mutable account links |
+| CLI | cli/ source contains no GetGithub/GetGitHub/GetLinkedGitHub reader |
+| Cache proxy | enterprise/server/cmd/cache_proxy/cache_proxy.go registers cache APIs, not BuildBuddyService; no applicable mutation or replicated GitHub reader |
+
+**Coverage limits, not passing deletion claims:** this release has no public
+legacy-workflow creation API (proto service and workflow service contain listing,
+deletion and execution but no insertion path). Creating a legacy row would
+require database seeding outside the valid-input public state machine. Empty
+GetWorkflows checks cannot establish deletion of pre-existing migrated rows.
+Functional GetWorkflowHistory needs an OLAP database; its absence is explicitly
+asserted, not silently accepted as any error. Coordinator follow-up: an OLAP
+fixture and a supported migration/legacy-row setup would enable these two
+additional checks. No shared file changes are made here.
+
+The isolated bug target now executes only account setup, installation link,
+repo link and installation unlink; it does not depend on setting toggles or
+unrelated deletions. Its 30s observation bound distinguishes the permanent
+source-derived stale flag from a transient eventual-consistency delay.
+
+Round-2 validation: [expanded suite](https://app.buildbuddy.io/invocation/8b0064f8-2ee6-4b9c-baf8-782925410c44)
+passes all 25 initial/OAuth/mutation steps. First complete matching snapshots
+were 62.7–113.0ms after starting each read sweep, with 287.8–318.0ms of subsequent
+stable observations. These are conservative observation upper bounds including
+RPC sweep time, not measured asynchronous replication latency. No transient
+mismatch was observed. [Final suite](https://app.buildbuddy.io/invocation/56620077-467f-44ea-a6fe-9234f4550c80)
+also passes with the bounded-error diagnostic and all final readers.
+The finding records two independent round-2 isolated reproductions.

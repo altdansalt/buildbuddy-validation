@@ -38,12 +38,54 @@ func githubMock(t *testing.T) (proxyURL, certPath, privateKey string) {
 	repo := map[string]any{"name": "project", "full_name": "fixture-owner/project", "clone_url": repoURL, "html_url": repoURL, "default_branch": "main"}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/login/oauth/access_token" && r.URL.Path != "/fixture-content" && !strings.HasPrefix(r.URL.Path, "/applications/") {
+			auth := r.Header.Get("Authorization")
+			if auth == "" {
+				t.Errorf("missing authorization on %s", r.URL.Path)
+				http.Error(w, "missing auth", 401)
+				return
+			}
+			if strings.HasPrefix(r.URL.Path, "/user") || r.URL.Path == "/graphql" || strings.Contains(r.URL.Path, "/git/") || strings.HasSuffix(r.URL.Path, "/commits") || strings.HasSuffix(r.URL.Path, "/forks") || strings.Contains(r.URL.Path, "/compare/") || strings.Contains(r.URL.Path, "/contents/") {
+				if !strings.Contains(auth, "fixture-only-token") {
+					t.Errorf("wrong user token on %s: %s", r.URL.Path, auth)
+					http.Error(w, "wrong auth", 401)
+					return
+				}
+			}
+		}
 		var result any
 		switch {
 		case r.URL.Path == "/login/oauth/access_token":
 			result = map[string]string{"access_token": "fixture-only-token", "token_type": "bearer"}
 		case r.URL.Path == "/app/installations/101/access_tokens":
 			result = map[string]string{"token": "fixture-installation-token", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339)}
+		case r.URL.Path == "/repos/fixture-owner/project/contents/":
+			result = []any{map[string]any{"type": "file", "name": "README.md", "path": "README.md", "download_url": "https://api.github.com/fixture-content"}}
+		case r.URL.Path == "/repos/fixture-owner/project/contents/README.md":
+			result = map[string]any{"type": "file", "name": "README.md", "path": "README.md", "download_url": "https://api.github.com/fixture-content"}
+		case r.URL.Path == "/fixture-content" || r.URL.Path == "/repos/fixture-owner/project/git/blobs/abc":
+			w.Write([]byte("fixture content\n"))
+			return
+		case r.URL.Path == "/repos/fixture-owner/project/git/trees/main":
+			result = map[string]any{"sha": "tree-sha", "tree": []any{map[string]any{"path": "README.md", "sha": "abc", "type": "blob", "mode": "100644", "size": 16}}}
+		case r.URL.Path == "/repos/fixture-owner/project/compare/main...topic":
+			result = map[string]any{"ahead_by": 1, "commits": []any{}, "files": []any{}}
+		case r.URL.Path == "/repos/fixture-owner/project/forks":
+			result = []any{map[string]any{"owner": map[string]any{"login": "fixture-fork"}}}
+		case r.URL.Path == "/repos/fixture-owner/project/commits":
+			result = []any{map[string]any{"sha": "commit-sha", "commit": map[string]any{"message": "fixture commit", "tree": map[string]any{"sha": "tree-sha"}}}}
+		case r.URL.Path == "/repos/fixture-owner/project/pulls/1/files":
+			result = []any{}
+		case r.URL.Path == "/graphql":
+			var query struct {
+				Query string `json:"query"`
+			}
+			must(t, json.NewDecoder(r.Body).Decode(&query))
+			if strings.Contains(query.Query, "search(") {
+				result = map[string]any{"data": map[string]any{"viewer": map[string]any{"login": "fixture-user"}, "search": map[string]any{"nodes": []any{}}}}
+			} else {
+				result = map[string]any{"data": map[string]any{"viewer": map[string]any{"login": "fixture-user"}, "repository": map[string]any{"pullRequest": map[string]any{"id": "PR_fixture", "title": "Fixture PR", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z", "mergeStateStatus": "CLEAN", "headRefName": "topic", "baseRefOid": "base", "headRefOid": "head", "author": map[string]any{"__typename": "User", "login": "fixture-user"}, "timelineItems": map[string]any{"nodes": []any{}}, "reviewRequests": map[string]any{"nodes": []any{}}, "reviewThreads": map[string]any{"nodes": []any{}}, "reviews": map[string]any{"nodes": []any{}}, "commits": map[string]any{"nodes": []any{}}}}}}
+			}
 		case r.URL.Path == "/repos/fixture-owner/project":
 			result = repo
 		case r.URL.Path == "/repos/fixture-owner/project/installation":
