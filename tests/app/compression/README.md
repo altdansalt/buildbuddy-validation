@@ -18,3 +18,23 @@ compressed read limits. Findings are in `findings/app-compression-*.md`.
 GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/compression/... --config=nobug
 GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/compression/... --test_tag_filters=bug --nocache_test_results
 ```
+
+Round 2 adds `QueryWriteStatus` checks around interrupted and completed compressed
+uploads, followed by a retry from offset zero. The released app deliberately
+returns `Unimplemented` for status queries; this coverage records that limitation and tests the restart fallback,
+without claiming resumable upload support. Unknown,
+unadvertised, identity, and uppercase compressor resource names must be rejected
+without persisting an upload. Three concatenated zstd frames of seeded random
+bytes exercise incompressible input whose wire size exceeds its digest size.
+
+`TestSeededRoundTripProperty` runs 24 reproducible payload/chunking trials through
+all four identity/zstd write/read combinations. Inputs alternate low-entropy and
+random bytes, with boundary sizes and randomized sizes up to 300 KB. Each write
+mode uses a distinct digest so an already-cached blob cannot bypass the writer.
+Replay another seed with `--test_arg=-compression.seed=12345`.
+
+Round 2 validation on the digest-pinned enterprise-v2.314.0 app passed twice:
+[run 1](https://app.buildbuddy.io/invocation/6b76b337-5be7-44ad-9e0a-33ffba8bb993)
+and [run 2](https://app.buildbuddy.io/invocation/2a8cf6c2-d6e1-462a-a751-26c725533861).
+Both ran `bb remote test //tests/app/compression/... --config=nobug` and executed
+the regression target. No additional suspected correctness defect was observed.

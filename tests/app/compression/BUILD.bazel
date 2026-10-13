@@ -13,7 +13,7 @@ go_test(
     name = "regression_test",
     size = "large",
     timeout = "long",
-    srcs = ["compression_test.go", "helpers_test.go"],
+    srcs = ["compression_test.go", "helpers_test.go", "round2_test.go"],
     tags = ["local", "requires-network"],
     deps = DEPS,
 )
