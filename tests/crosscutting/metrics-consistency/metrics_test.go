@@ -104,7 +104,13 @@ func scrape(ctx context.Context, url string) (snapshot, string, error) {
 			return s, string(b), fmt.Errorf("inconsistent labels %s: %s vs %s", m[1], old, schema)
 		}
 		s.schemas[m[1]] = schema
-		key := m[1] + m[2]
+		// Canonicalize label order: Prometheus series identity is unordered.
+		var identity strings.Builder
+		identity.WriteString(m[1])
+		for _, k := range keys {
+			fmt.Fprintf(&identity, "{%s=%q}", k, labels[k])
+		}
+		key := identity.String()
 		if _, ok := s.samples[key]; ok {
 			return s, string(b), fmt.Errorf("duplicate series %s", key)
 		}
