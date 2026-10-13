@@ -49,3 +49,11 @@ workspace; released app/executor images retain the harness digest pins.
 PATH coverage includes qualified names with an unusable PATH, system tools,
 and Docker relative/missing/empty PATH entries. Bare action-PATH lookup cases
 extend the existing `bug` target and finding rather than duplicating the defect.
+
+On the hosted Docker runtime, runc rejects unqualified executables found via
+relative PATH entries (`cannot run executable found relative to current
+directory`, Go's ErrDot). The Docker PATH cases pin this clean runtime rejection;
+it is not filed as a BuildBuddy defect. Qualified executables and absolute
+system PATH entries succeed. For execve overflow, bare execution returns an
+execution status diagnostic; Docker returns exit 255 with the diagnostic in
+CAS-backed stderr. Both forms are accepted and checked for `argument list too long`.

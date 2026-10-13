@@ -1,6 +1,7 @@
 package envargs_test
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/altdansalt/buildbuddy-validation/harness"
@@ -88,7 +89,7 @@ func TestRound2(t *testing.T) {
 								require.Less(t, time.Since(start), 60*time.Second, "must terminate promptly")
 								require.NotEqual(t, int32(4), r.GetStatus().GetCode(), "must not time out")
 								require.True(t, r.GetStatus().GetCode() != 0 || r.GetResult().GetExitCode() != 0, "oversized exec must fail")
-								require.Contains(t, strings.ToLower(fmt.Sprint(r)), "argument list too long")
+								require.Contains(t, diagnostic(t, c, r), "argument list too long")
 							}
 						})
 					}
@@ -102,7 +103,7 @@ func TestRound2(t *testing.T) {
 				r := run(t, cmd)
 				require.Less(t, time.Since(start), 60*time.Second)
 				require.NotEqual(t, int32(4), r.GetStatus().GetCode())
-				require.Contains(t, strings.ToLower(fmt.Sprint(r)), "argument list too long")
+				require.Contains(t, diagnostic(t, c, r), "argument list too long")
 				require.Equal(t, "healthy", stdout(t, c, run(t, &repb.Command{Arguments: []string{"/bin/sh", "-c", "printf healthy"}})))
 			})
 			t.Run("qualified-and-system-path", func(t *testing.T) {
@@ -113,10 +114,31 @@ func TestRound2(t *testing.T) {
 				require.Equal(t, "ok\n", stdout(t, c, run(t, &repb.Command{Arguments: []string{"sh", "-c", "printf 'ok\\n'"}, EnvironmentVariables: []*repb.Command_EnvironmentVariable{{Name: "PATH", Value: "/bin:/usr/bin"}}})))
 				if docker {
 					for _, path := range []string{"tools", "missing:tools", ":tools"} {
-						require.Equal(t, "input-tool:ok\n", stdout(t, c, run(t, &repb.Command{Arguments: []string{"envargs-tool", "ok"}, EnvironmentVariables: []*repb.Command_EnvironmentVariable{{Name: "PATH", Value: path}}})))
+						r := run(t, &repb.Command{Arguments: []string{"envargs-tool", "ok"}, EnvironmentVariables: []*repb.Command_EnvironmentVariable{{Name: "PATH", Value: path}}})
+						// Hosted Docker's runc refuses relative PATH lookup (Go ErrDot).
+						// Preserve its clean rejection as runtime-specific coverage.
+						require.NotZero(t, r.GetStatus().GetCode())
+						require.Contains(t, r.GetStatus().GetMessage(), "cannot run executable found relative to current directory")
 					}
 				}
 			})
 		})
 	}
+}
+
+// Docker reports execve errors through action stderr, while bare execution
+// reports a non-OK execution status. Both must retain a useful diagnostic.
+func diagnostic(t *testing.T, c *harness.Clients, r *repb.ExecuteResponse) string {
+	t.Helper()
+	b := r.GetResult().GetStderrRaw()
+	if d := r.GetResult().GetStderrDigest(); d != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		var err error
+		b, err = c.Read(ctx, instance, d)
+		require.NoError(t, err)
+	}
+	text := strings.ToLower(r.GetStatus().GetMessage() + string(b))
+	t.Logf("failure diagnostic: %s", text)
+	return text
 }
