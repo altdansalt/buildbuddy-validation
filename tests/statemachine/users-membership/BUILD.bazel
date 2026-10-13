@@ -3,7 +3,7 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["membership_test.go", "revocation_test.go", "effective_test.go", "cli_test.go", "permissions_test.go", "cache_writes_test.go", "oidc_test.go", "wire_test.go"],
+    srcs = ["download_test.go", "membership_test.go", "revocation_test.go", "effective_test.go", "cli_test.go", "permissions_test.go", "cache_writes_test.go", "oidc_test.go", "wire_test.go"],
     tags = ["local", "requires-network"],
     deps = [
         "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
@@ -22,7 +22,7 @@ go_test(
     size = "large",
     timeout = "long",
     args = ["-test.run=^TestImmediateProxyMembershipRevocation$$"],
-    srcs = ["revocation_bug_test.go","membership_test.go", "revocation_test.go", "effective_test.go", "cli_test.go", "permissions_test.go", "cache_writes_test.go", "oidc_test.go", "wire_test.go"],
+    srcs = ["revocation_bug_test.go", "download_test.go", "membership_test.go", "revocation_test.go", "effective_test.go", "cli_test.go", "permissions_test.go", "cache_writes_test.go", "oidc_test.go", "wire_test.go"],
     tags = ["bug", "local", "requires-network"],
     deps = [
         "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
@@ -40,8 +40,8 @@ go_test(
     name = "download_bug",
     size = "large",
     timeout = "long",
-    args = ["-test.v", "-test.run=^TestRemovedMemberHTTPDownload"],
-    srcs = ["download_bug_test.go", "membership_test.go", "revocation_test.go", "effective_test.go", "cli_test.go", "permissions_test.go", "cache_writes_test.go", "oidc_test.go", "wire_test.go"],
+    args = ["-test.v", "-test.run=^TestRemovedMemberHTTPDownload$$"],
+    srcs = ["download_bug_test.go", "download_test.go", "membership_test.go", "revocation_test.go", "effective_test.go", "cli_test.go", "permissions_test.go", "cache_writes_test.go", "oidc_test.go", "wire_test.go"],
     tags = ["bug", "local", "requires-network"],
     deps = [
         "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
