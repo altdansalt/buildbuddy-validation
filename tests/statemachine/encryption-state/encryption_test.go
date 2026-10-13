@@ -14,7 +14,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
@@ -97,18 +99,21 @@ func TestEncryptionState(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(kms, name), []byte("0123456789abcdef0123456789abcdef"), 0600))
 	}
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}, DockerArgs: map[harness.Component][]string{harness.App: {"--volume", kms + ":/kms:ro"}}, Config: map[harness.Component]harness.Config{
-		harness.App:        {"keystore": harness.Config{"master_key_uri": "local-insecure-kms://master", "local_insecure_kms_directory": "/kms"}, "app": harness.Config{"client_identity": harness.Config{"key": "fixture-identity"}}, "crypter": harness.Config{"permitted_clients": []string{"cache-proxy"}}},
-		harness.CacheProxy: {"app": harness.Config{"client_identity": harness.Config{"key": "fixture-identity", "client": "cache-proxy", "origin": "fixture"}}, "crypter": harness.Config{"remote_target": "grpc://app:1985"}},
+		harness.App:        {"auth": harness.Config{"api_key_group_cache_ttl": "0s"}, "keystore": harness.Config{"master_key_uri": "local-insecure-kms://master", "local_insecure_kms_directory": "/kms"}, "app": harness.Config{"client_identity": harness.Config{"key": "fixture-identity"}}, "crypter": harness.Config{"permitted_clients": []string{"cache-proxy"}, "key_ttl": "100ms"}},
+		harness.CacheProxy: {"auth": harness.Config{"remote": harness.Config{"jwt_cache_ttl": "1ms"}}, "app": harness.Config{"client_identity": harness.Config{"key": "fixture-identity", "client": "cache-proxy", "origin": "fixture"}}, "crypter": harness.Config{"remote_target": "grpc://app:1985", "key_ttl": "100ms"}},
 	}})
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	f.Web.Client.Timeout = 10 * time.Second
+	f.APIKey = f.Web.CreateAPIKey(t, f.GroupID, "encryption-admin", []string{"CACHE_WRITE", "ORG_ADMIN"})
 	app, proxy := f.Clients(harness.App), f.Clients(harness.CacheProxy)
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"Client": "cache-proxy", "Origin": "fixture", "exp": time.Now().Add(5 * time.Minute).Unix()}).SignedString([]byte("fixture-identity"))
 	require.NoError(t, err)
 	keyCtx := metadata.AppendToOutgoingContext(ctx, "x-buildbuddy-client-identity", token)
 	rc := map[string]any{"requestContext": f.Web.RequestContext(f.GroupID)}
 	m := model{}
+	var previousKey []byte
+	epochBlobs := map[*repb.Digest][]byte{}
 	check := func() {
 		out := rpc(t, ctx, app, service+"GetEncryptionConfig", nil)
 		_, enabled := field(out, 2)
@@ -118,7 +123,20 @@ func TestEncryptionState(t *testing.T) {
 		require.Equal(t, m.enabled, web["enabled"] == true)
 		supported, _ := field(out, 3)
 		require.Contains(t, supported, byte(1), "local KMS must be advertised")
+		if !m.enabled {
+			require.Eventually(t, func() bool {
+				var out []byte
+				err := app.Conn.Invoke(keyCtx, "/encryption.EncryptionService/GetEncryptionKey", []byte(nil), &out, grpc.ForceCodec(wireCodec{}))
+				return status.Code(err) == codes.NotFound
+			}, 15*time.Second, 25*time.Millisecond, "disabled group must eventually have no active key")
+		}
 		if m.enabled {
+			require.Eventually(t, func() bool {
+				var out []byte
+				err := app.Conn.Invoke(keyCtx, "/encryption.EncryptionService/GetEncryptionKey", []byte(nil), &out, grpc.ForceCodec(wireCodec{}))
+				key, _ := field(out, 1)
+				return err == nil && (previousKey == nil || string(key) != string(previousKey))
+			}, 15*time.Second, 25*time.Millisecond, "enabled group must expose its current key")
 			for i := 0; i < 2; i++ {
 				out := rpc(t, keyCtx, app, "/encryption.EncryptionService/GetEncryptionKey", nil)
 				key, _ := field(out, 1)
@@ -146,15 +164,47 @@ func TestEncryptionState(t *testing.T) {
 		}
 		rpc(t, ctx, app, service+"SetEncryptionConfig", req)
 		if m.enabled != enabled {
+			if !enabled {
+				previousKey = append([]byte(nil), m.key...)
+			}
 			m.key = nil
+			epochBlobs = map[*repb.Digest][]byte{}
 		}
 		m.enabled = enabled
 		check()
+		if enabled && previousKey != nil {
+			require.NotEqual(t, previousKey, m.key, "re-enable creates a new key")
+		}
 		// Unique content avoids deduplication with records from another encryption epoch.
 		data := []byte(fmt.Sprintf("encryption-state step %d enabled %v", step, enabled))
-		d, err := proxy.Upload(ctx, "", data)
-		require.NoError(t, err)
+		writer := proxy
+		if step%2 == 0 {
+			writer = app
+		}
+		d := harness.Digest(data)
+		if step%3 == 0 {
+			r, err := writer.CAS.BatchUpdateBlobs(ctx, &repb.BatchUpdateBlobsRequest{Requests: []*repb.BatchUpdateBlobsRequest_Request{{Digest: d, Data: data}}})
+			require.NoError(t, err)
+			require.Len(t, r.Responses, 1)
+			require.Zero(t, r.Responses[0].Status.GetCode())
+		} else {
+			uploaded, err := writer.Upload(ctx, "", data)
+			require.NoError(t, err)
+			require.True(t, proto.Equal(d, uploaded))
+		}
+		epochBlobs[d] = data
+		for digest, content := range epochBlobs {
+			for _, c := range []*harness.Clients{app, proxy} {
+				got, err := c.Read(ctx, "", digest)
+				require.NoError(t, err)
+				require.Equal(t, content, got)
+			}
+		}
 		for _, c := range []*harness.Clients{app, proxy} {
+			require.Eventually(t, func() bool {
+				r, e := c.CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{BlobDigests: []*repb.Digest{d}})
+				return e == nil && len(r.MissingBlobDigests) == 0
+			}, 10*time.Second, 25*time.Millisecond, "cache write must become visible")
 			got, err := c.Read(ctx, "", d)
 			require.NoError(t, err)
 			require.Equal(t, data, got)
@@ -173,6 +223,13 @@ func TestEncryptionState(t *testing.T) {
 		mdReq := msg(2, resource)
 		md := rpc(t, ctx, app, "/cache.service.Cache/GetMetadata", mdReq)
 		_, size := field(md, 5)
+		proxyMD := rpc(t, ctx, proxy, "/cache.service.Cache/GetMetadata", mdReq)
+		_, proxySize := field(proxyMD, 5)
+		require.Equal(t, size, proxySize)
+		_, stored := field(md, 2)
+		if m.enabled {
+			require.Greater(t, stored, uint64(len(data)), "new app record must contain encryption overhead")
+		}
 		require.Equal(t, uint64(len(data)), size)
 		ui := rpc(t, ctx, app, service+"GetCacheMetadata", mdReq)
 		_, uiSize := field(ui, 5)
@@ -183,8 +240,14 @@ func TestEncryptionState(t *testing.T) {
 		action := harness.Digest([]byte(fmt.Sprintf("action-%d", step)))
 		for update := 0; update < 2; update++ {
 			want := &repb.ActionResult{ExitCode: 0, StdoutRaw: []byte(fmt.Sprintf("result-%d-%d", step, update))}
-			_, err := app.AC.UpdateActionResult(ctx, &repb.UpdateActionResultRequest{ActionDigest: action, ActionResult: want})
-			require.NoError(t, err)
+			acWriter := proxy
+			if update == 0 {
+				acWriter = app
+			}
+			for repeat := 0; repeat < 2; repeat++ {
+				_, err := acWriter.AC.UpdateActionResult(ctx, &repb.UpdateActionResultRequest{ActionDigest: action, ActionResult: want})
+				require.NoError(t, err)
+			}
 			for _, c := range []*harness.Clients{app, proxy} {
 				got, err := c.AC.GetActionResult(ctx, &repb.GetActionResultRequest{ActionDigest: action, InlineStdout: true})
 				require.NoError(t, err)
