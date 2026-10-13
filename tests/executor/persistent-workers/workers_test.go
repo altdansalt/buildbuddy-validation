@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -60,7 +61,12 @@ func (f *fixture) run(t *testing.T, protocol, key, content string, args []string
 	require.NoError(t, err)
 	props := []*repb.Platform_Property{{Name: "OSFamily", Value: "linux"}, {Name: "Arch", Value: "amd64"}, {Name: "workload-isolation-type", Value: "none"}}
 	if persistent {
-		props = append(props, &repb.Platform_Property{Name: "persistentWorkerKey", Value: key}, &repb.Platform_Property{Name: "persistentWorkerProtocol", Value: protocol})
+		props = append(props, &repb.Platform_Property{Name: "persistentWorkerProtocol", Value: protocol})
+		if key != "" {
+			props = append(props, &repb.Platform_Property{Name: "persistentWorkerKey", Value: key})
+		} else {
+			props = append(props, &repb.Platform_Property{Name: "persistent-workers", Value: "true"}, &repb.Platform_Property{Name: "recycle-runner", Value: "true"})
+		}
 	}
 	cmd, err := f.c.UploadProto(ctx, instance, &repb.Command{Arguments: []string{"./worker", protocol, "@args.txt"}, Platform: &repb.Platform{Properties: props}})
 	require.NoError(t, err)
@@ -146,6 +152,56 @@ func TestWorkerExitRecovery(t *testing.T) {
 			require.Equal(t, "after", after.Content)
 			require.NotEqual(t, before.PID, after.PID)
 			require.Equal(t, 1, after.Count)
+		})
+	}
+}
+func TestConcurrentMultiplexCapableWorker(t *testing.T) {
+	t.Logf("seed=%d", *seed)
+	f := start(t)
+	// The worker echoes IDs and accepts both singleplex and multiplex framing.
+	// The released executor sends ID zero and may use multiple worker processes.
+	for _, protocol := range []string{"json", "proto"} {
+		t.Run(protocol, func(t *testing.T) {
+			var wg sync.WaitGroup
+			for i := 0; i < 4; i++ {
+				i := i
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					content := fmt.Sprintf("seed=%d concurrent=%d", *seed, i)
+					r, o := f.run(t, protocol, protocol+"-concurrent", content, []string{content}, true)
+					success(t, r)
+					require.Equal(t, content, o.Content)
+					require.Equal(t, []string{content}, o.Arguments)
+				}()
+			}
+			wg.Wait()
+		})
+	}
+}
+
+func TestPlatformProtocolAndDerivedKeys(t *testing.T) {
+	t.Logf("seed=%d", *seed)
+	f := start(t)
+	for _, key := range []string{"same-explicit-key", ""} {
+		t.Run(fmt.Sprintf("key=%q", key), func(t *testing.T) {
+			pids := map[string]int{}
+			for i := 0; i < 3; i++ {
+				for _, protocol := range []string{"json", "proto"} {
+					content := fmt.Sprintf("seed=%d protocol=%s iteration=%d", *seed, protocol, i)
+					r, o := f.run(t, protocol, key, content, []string{content}, true)
+					success(t, r)
+					require.Equal(t, content, o.Content)
+					require.Equal(t, []string{content}, o.Arguments)
+					require.Positive(t, o.PID)
+					if i == 0 {
+						pids[protocol] = o.PID
+					}
+					require.Equal(t, pids[protocol], o.PID)
+					require.Equal(t, i+1, o.Count)
+				}
+			}
+			require.NotEqual(t, pids["json"], pids["proto"], "different protocol properties must isolate workers even with identical explicit keys")
 		})
 	}
 }
