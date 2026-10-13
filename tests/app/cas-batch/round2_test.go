@@ -116,6 +116,7 @@ func TestConcurrentOverlappingCompressedBatches(t *testing.T) {
 			<-start
 			for iteration := 0; iteration < 10; iteration++ {
 				batch := make([]*repb.BatchUpdateBlobsRequest_Request, 0, 8)
+				uploaded := map[string]bool{}
 				for j := 0; j < 8; j++ {
 					base := items[(worker+j+iteration)%len(items)]
 					wire := base.Data
@@ -130,6 +131,7 @@ func TestConcurrentOverlappingCompressedBatches(t *testing.T) {
 						compressor = repb.Compressor_ZSTD
 					}
 					batch = append(batch, &repb.BatchUpdateBlobsRequest_Request{Digest: base.Digest, Data: wire, Compressor: compressor})
+					uploaded[base.Digest.Hash] = true
 				}
 				update, err := c.CAS.BatchUpdateBlobs(ctx, &repb.BatchUpdateBlobsRequest{InstanceName: "overlap", Requests: batch})
 				if err != nil {
@@ -157,6 +159,10 @@ func TestConcurrentOverlappingCompressedBatches(t *testing.T) {
 				}
 				for _, r := range read.Responses {
 					if r.GetStatus().GetCode() == int32(codes.NotFound) {
+						if uploaded[r.Digest.Hash] {
+							failures <- fmt.Errorf("acknowledged upload missing: %s", r.Digest.Hash)
+							return
+						}
 						continue
 					}
 					if r.GetStatus().GetCode() != 0 {
@@ -294,24 +300,21 @@ func TestBatchStoragePressure(t *testing.T) {
 	}
 }
 
-func TestBatchCompressorItemFailures(t *testing.T) {
+func TestUnsupportedBatchCompressorIsPerItem(t *testing.T) {
 	ctx, c := client(t)
 	good := []byte("compressor-valid-peer")
-	invalid := []byte("invalid-zstd-payload")
 	unsupported := []byte("unsupported-compressor-payload")
-	items := []*repb.BatchUpdateBlobsRequest_Request{
+	r, err := c.CAS.BatchUpdateBlobs(ctx, &repb.BatchUpdateBlobsRequest{InstanceName: "compressor-errors", Requests: []*repb.BatchUpdateBlobsRequest_Request{
 		{Digest: harness.Digest(good), Data: good},
-		{Digest: harness.Digest(invalid), Data: []byte("not a zstd frame"), Compressor: repb.Compressor_ZSTD},
 		{Digest: harness.Digest(unsupported), Data: unsupported, Compressor: repb.Compressor_Value(100)},
-	}
-	r, err := c.CAS.BatchUpdateBlobs(ctx, &repb.BatchUpdateBlobsRequest{InstanceName: "compressor-errors", Requests: items})
+	}})
 	require.NoError(t, err)
-	require.Len(t, r.Responses, 3)
+	require.Len(t, r.Responses, 2)
 	for _, item := range r.Responses {
 		if item.Digest.Hash == harness.Digest(good).Hash {
 			require.Zero(t, item.GetStatus().GetCode())
 		} else {
-			require.Equal(t, int32(codes.InvalidArgument), item.GetStatus().GetCode(), "%v", item)
+			require.Equal(t, int32(codes.Unimplemented), item.GetStatus().GetCode(), "%v", item)
 		}
 	}
 }

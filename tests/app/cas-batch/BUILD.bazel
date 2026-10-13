@@ -34,3 +34,12 @@ go_test(
     tags = ["bug", "local", "requires-network"],
     deps = DEPS,
 )
+
+go_test(
+    name = "malformed_zstd_bug_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["fixture_test.go", "compressed_invalid_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
