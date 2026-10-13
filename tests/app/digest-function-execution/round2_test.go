@@ -58,15 +58,15 @@ func TestConcurrentDigestFunctionsAndSymlinks(t *testing.T) {
 			defer cancel()
 			if viaProxy {
 				// The harness starts Executor before CacheProxy. gRPC may retain the
-				// initial DNS failure until its reconnect timer fires. Retry only that
-				// exact startup failure before beginning the measured concurrent waves.
+				// initial dial failure until its reconnect timer fires. Retry only
+				// DNS-not-found or connection-refused startup failures before beginning the measured concurrent waves.
 				warmCtx, warmCancel := context.WithTimeout(ctx, time.Minute)
 				defer warmCancel()
 				d := action(t, warmCtx, proxy, repb.DigestFunction_SHA256, []byte("warmup"), *seed-1)
 				for {
 					r, err := execute(warmCtx, app, repb.DigestFunction_SHA256, d, true)
 					require.NoError(t, err)
-					if r.GetStatus().GetCode() == int32(codes.Unavailable) && strings.Contains(r.GetStatus().GetMessage(), "lookup cacheproxy") && strings.Contains(r.GetStatus().GetMessage(), "no such host") {
+					if r.GetStatus().GetCode() == int32(codes.Unavailable) && strings.Contains(r.GetStatus().GetMessage(), "transport: Error while dialing") && ((strings.Contains(r.GetStatus().GetMessage(), "lookup cacheproxy") && strings.Contains(r.GetStatus().GetMessage(), "no such host")) || strings.Contains(r.GetStatus().GetMessage(), "connect: connection refused")) {
 						t.Log("waiting for executor cache connection after proxy startup")
 						select {
 						case <-warmCtx.Done():
