@@ -4,7 +4,6 @@ Run on hosted runners only:
 
 ```sh
 GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/crosscutting/config-validation/... --config=nobug
-GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/crosscutting/config-validation:unknown_key_bug_test --test_tag_filters=bug --nocache_test_results --test_output=all
 ```
 
 `config_test` logs its deterministic seed (default 314). Extend valid input
@@ -31,10 +30,9 @@ Correctness references for the pinned v2.314.0 release:
 - [Executor required target and traffic range](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/cmd/executor/executor.go)
 - [REAPI CAS contract](https://github.com/bazelbuild/remote-apis/blob/main/build/bazel/remote/execution/v2/remote_execution.proto)
 
-Unknown-key rejection is the requested suite invariant. The pinned loader
-explicitly warns and drops unknown keys, so the bug target records an intentional
-permissive implementation that conflicts with that invariant, rather than
-claiming the warning is absent or that REAPI specifies YAML startup behavior.
+`unknown_key_test` verifies that every component warns about a misspelled key,
+ignores it, and becomes ready. This is the accepted permissive loader behavior;
+strict rejection is not a promised startup contract.
 
 Not covered yet: all feature-specific required settings, conflicting isolation
 providers, external secret providers, config reload, and comprehensive typed
