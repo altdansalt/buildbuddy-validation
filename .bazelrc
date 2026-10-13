@@ -3,7 +3,7 @@
 build --spawn_strategy=local
 build --strategy=TestRunner=local
 test --test_output=errors
-test --test_timeout=600
+test --test_timeout=600,600,600,1800
 # The ordinary suite is green; reproductions are run explicitly without nobug.
 test --config=nobug
 test:nobug --test_tag_filters=-bug
