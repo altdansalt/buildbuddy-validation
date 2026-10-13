@@ -37,6 +37,6 @@ or all patch releases.
 Round 2 adds `TestSharedProxyCache`: a seed-20261012 binary payload is built
 with Bazel 7, then rebuilt with 8 and 9 against the same proxy instance. Each
 rebuild must report a remote cache hit and preserve tree contents, empty files,
-symlinks and executable permissions. A concurrent wave of all three versions
-uses independent workspaces and fresh output roots against that shared cache.
+symlinks and executable permissions. Concurrent cold-upload and warm-read waves of all three versions
+use independent workspaces and fresh output roots against the proxy.
 Logs are named by phase and version in the fixture outputs.
