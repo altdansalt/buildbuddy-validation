@@ -1,6 +1,8 @@
 # Bazel 8 remote flags
 
-`go_default_test` runs checksum-pinned Bazel 8.4.2 inside the test runner. All
+All targets run checksum-pinned Bazel 8.4.2 inside the test runner.
+`go_default_test` covers restart and eviction; the three `seed_*_test` targets
+cover the randomized flag matrix. All
 cache and execution endpoints address harness-local released containers. Nested
 Bazel uses an empty environment and ignores every rc file; the dispatch API key
 is never forwarded.
@@ -14,12 +16,14 @@ app/executor and proxy cache builds. Every cold and warm build uses a fresh Baze
 output root. Binary outputs, an intermediate selected by the download regex,
 and a relative output symlink are compared with a local reference build. Warm
 builds must report real remote-cache hits. An input symlink exercises input tree
-construction. Default runtime is bounded by four cases and 100 seconds per build.
+construction. Each seed runs six cases with a 100-second bound per nested build. The suite
+runs seeds 83142, 20261013 and 917003 in separate Bazel targets. Download modes,
+cache compression and local-result upload settings extend the flag matrix.
 
 Replay or expand on a hosted runner:
 
 ```sh
-GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/crosscutting/bazel-flags/... --config=nobug --nocache_test_results --test_arg=-flags_seed=83142 --test_arg=-flags_iterations=4
+GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/crosscutting/bazel-flags/... --config=nobug --nocache_test_results --test_arg=-flags_seed=83142 --test_arg=-flags_iterations=6
 ```
 
 `flags_iterations` accepts 1 through 24. Every case logs the replay seed and flags
@@ -38,14 +42,45 @@ Correctness references:
   [common options](https://github.com/bazelbuild/bazel/blob/8.4.2/src/main/java/com/google/devtools/build/lib/remote/options/CommonRemoteOptions.java),
   and [execution options](https://github.com/bazelbuild/bazel/blob/8.4.2/src/main/java/com/google/devtools/build/lib/exec/ExecutionOptions.java).
 
-Retry settings are covered on a real restart, but the randomized eviction retry
-setting does not itself force CAS eviction. A forced eviction scenario and
-negative authentication cases remain follow-ups.
+## Round 2 eviction coverage
 
-Validation: [passing default suite](https://app.buildbuddy.io/invocation/bb2c8e03-5b79-40f9-9c99-a2c757fbed89)
-(seed 83142, four cases; 234 seconds). No product findings were observed.
+`TestForcedCASEviction` uses the released app's disk cache instead of Pebble so
+CAS files can be removed deterministically while preserving AC files, SQLite
+and authentication state. It checks a warm AC hit and a successful CAS read,
+uses a network-disabled helper with the already-pulled released executor image
+to delete only files outside `/ac/`, verifies a nonzero unchanged AC file count,
+restarts the app to refresh its disk-cache index, refreshes Docker's randomly
+published gRPC port, and waits for FindMissingBlobs to report the CAS digest
+missing.
+A fresh-root build must then recover without local fallback, preserve exact
+output bytes and the relative symlink, and repopulate a usable remote cache.
 
-The restart workaround discovers the daemon containing the fixture's exact
-container name. A harness `Restart`/`Docker` method would remove this dependence
-on the private daemon socket naming convention. No shared changes are required
-to run these tests. For larger iteration counts, raise the outer `--test_timeout`.
+The matrix covers `all`, `toplevel` and `minimal` with eviction retry budgets 0
+and 2. Minimal downloads select only final outputs via regex. Only `all` may
+materialize the intermediate. This exercises stale-AC validation after eviction
+between builds; it does not force the narrower race of eviction after AC lookup
+inside a build, so passing with budget zero does not prove Bazel exercised its
+cache-eviction retry path. Proxy flags remain covered by the seeded matrix;
+forced eviction targets the app/executor path to avoid a second CAS copy in the
+proxy masking the missing backend blob.
+
+Replay the full suite on hosted runners:
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/crosscutting/bazel-flags/... --config=nobug --nocache_test_results
+```
+
+PR #63 (harness lifecycle controls) was still open when this branch was created,
+so the fixture-scoped Docker workaround remains. The earlier area PR #84 was
+also open at branch creation and merged during validation; round 2 branches
+from its head. No shared edits are required.
+
+Validation: [focused eviction pass](https://app.buildbuddy.io/invocation/3a62c193-1116-47f3-9372-908c42532b01)
+(all six combinations, 178.9 seconds). Setup failures were resolved by using a
+shell-bearing volume helper for the distroless app and refreshing published
+ports after restart. No product defect was observed.
+
+[Full round 2 suite](https://app.buildbuddy.io/invocation/76eba84a-d69c-4aa3-b3c5-e0a270830d76)
+passed with `bb remote test //tests/crosscutting/bazel-flags/... --config=nobug`:
+four targets, three seeds with six combinations each, restart coverage, and all
+six eviction/download-mode combinations (551 seconds overall).
