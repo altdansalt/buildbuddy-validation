@@ -1,0 +1,10 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "go_default_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["flags_test.go"],
+    tags = ["local", "requires-network"],
+    deps = ["//harness:go_default_library"],
+)

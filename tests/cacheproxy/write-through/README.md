@@ -35,6 +35,35 @@ locates the default or private fallback Docker socket by checking for the exact
 fixture container ID, then pauses/unpauses only that container. A public bounded
 fixture Docker command method would remove this workaround.
 
-This covers backend transport interruption, not injected disk exhaustion,
-backend-specific per-blob write errors, feature-flagged chunking, or local-cache
-write failures.
+Round 2 adds bounded disk exhaustion and read-only external blob storage on the
+proxy. The blob directory uses an 8 MiB tmpfs; Pebble metadata and WAL remain on
+normal fixture storage. The exhaustion helper copies BusyBox and its musl loader
+from the fixture's pinned Redis image into the proxy, which has no shell. It
+checks ENOSPC before testing batch, identity and zstd writes and exact readback
+from both endpoints. This does not exercise exhaustion of the Pebble WAL volume.
+
+Additional coverage writes 5 MiB blobs through a proxy with a 1 MiB eviction
+budget, rejects oversized gRPC messages at a 1,100,000-byte receive limit, and
+checks cancellation, EOF, premature finish and declared-size overruns. Interrupted
+identity and zstd uploads must remain absent at both endpoints over repeated
+reads, and the same digest must accept a complete retry.
+
+A fixture-local `ghcr.io/open-feature/flagd:v0.12.4` sidecar enables
+`cache_proxy.intercept_and_chunk_large_writes`. Both released components use a
+64 KiB average chunk size. The test refreshes the published proxy port after
+restarting it with the flagd configuration, repeats the interruption checks, and
+uses backend SplitBlob to verify multiple chunks. Container logs and the flagd
+configuration are retained with the fixture artifacts. No shared deployment or
+experiment service is used.
+
+Backend-specific per-blob write errors and exhaustion of the proxy's metadata
+filesystem remain outside this coverage. A bounded public fixture Docker command
+method would remove daemon discovery and port-refresh workarounds.
+
+Round 2 validation passed on hosted runners:
+[first green run](https://app.buildbuddy.io/invocation/a21e2a06-d303-4ea2-ad06-16128545bd24)
+and [final run including storage-failure interruption checks](https://app.buildbuddy.io/invocation/78eaae1b-d031-4e40-882b-c85468c9b8b4).
+Both used `--runner_exec_properties=init-dockerd=true` and
+`--nocache_test_results`. Earlier runs hit Docker Hub's anonymous Redis pull
+limit; a cached prestarted daemon avoided that infrastructure failure. No
+product bug was observed in this round.

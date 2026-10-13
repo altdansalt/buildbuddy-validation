@@ -28,10 +28,30 @@ Contract references:
 - [Released executor cache routing](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/cmd/executor/executor.go).
 - [Released app cache lookup and result publication](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/remote_execution/execution_server/execution_server.go).
 
-The test is intentionally a sequential state-transition check. Cancellation,
-concurrent action merging, directory/symlink outputs and container restarts are
-follow-up coverage.
+Round 2 adds `TestRound2`: two simultaneous clients building the same target,
+clients with overlapping dependency graphs, SIGINT after a slow remote action
+starts, directory outputs with nested binary/empty files and a relative symlink,
+a symlink output pointing into that directory, and proxy/app/executor restarts
+between builds. Every scenario ends with a fresh no-cache build followed by a
+fresh cached rebuild. Execution logs assert remote execution and cache-hit state;
+recursive snapshots compare all file bytes, directories and symlink destinations.
+Restarts also compare cached results directly with the pre-restart outputs.
+
+The cancellation synchronization marker lives only in the fixture executor's
+`/tmp`; it confirms execution has begun before sending SIGINT to Bazel. Restart
+commands retain the fixture volumes, refresh Docker-assigned host ports, and
+wait for component readiness. Cleanup restores write permission on Bazel's
+read-only downloaded tree directories before removing output bases. Docker
+commands locate the daemon by the exact fixture container, supporting both the
+runner daemon and the harness-owned fallback. No fixture key or worker credentials
+are inherited by the Bazel client.
 
 Validation on the pinned release: [passing hosted invocation](https://app.buildbuddy.io/invocation/f909d8fb-dfab-46c6-88f5-7529205cef7b)
 ([outer runner](https://app.buildbuddy.io/invocation/1192354f-acb0-4b86-8caa-1112dcbf4def)).
 All six cases passed; no product finding was observed.
+
+Round 2 validation on the same pinned images:
+[passing hosted suite](https://app.buildbuddy.io/invocation/6291d289-de07-41c9-a5c1-c8f9305fc1d7)
+([outer runner](https://app.buildbuddy.io/invocation/c8961b28-78f1-413a-b1d6-6708008dfdb7)),
+using the command above with `--nocache_test_results`. All seven round 2 scenarios
+and the original chain coverage passed. No product finding was observed.
