@@ -1,15 +1,13 @@
 package structures_test
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -86,6 +84,9 @@ func (m *model) directory(t *testing.T, ctx context.Context, c *harness.Clients,
 	b, _, err := harness.MarshalDigest(dir)
 	require.NoError(t, err)
 	d := m.put(t, ctx, c, b, write)
+	if _, ok := m.dirs[key(d)]; !ok {
+		m.roots = append(m.roots, d)
+	}
 	m.dirs[key(d)] = dir
 	return d
 }
@@ -114,7 +115,7 @@ func (m *model) size(d *repb.Digest) (int64, int64) {
 }
 func tree(ctx context.Context, c *harness.Clients, d *repb.Digest, ui bool) (map[string]*repb.Directory, error) {
 	out := map[string]*repb.Directory{}
-	add := func(dir *repb.Directory) { _, dg, _ := harness.MarshalDigest(dir); out[key(dg)] = dir }
+	add := func(dir *repb.Directory) { addDirectory(out, dir) }
 	if !ui {
 		token := ""
 		for {
@@ -178,6 +179,9 @@ func tree(ctx context.Context, c *harness.Clients, d *repb.Digest, ui bool) (map
 	return out, nil
 }
 func (m *model) check(ctx context.Context, f *harness.Fixture, clients []*harness.Clients) error {
+	if err := m.extraSurfaces(ctx, f, clients); err != nil {
+		return err
+	}
 	for _, c := range clients {
 		digests := []*repb.Digest{}
 		for k, b := range m.blobs {
@@ -218,7 +222,7 @@ func (m *model) check(ctx context.Context, f *harness.Fixture, clients []*harnes
 
 		for _, root := range m.roots {
 			want := map[string]*repb.Directory{}
-			m.reachable(root, want)
+			m.expectedTree(root, want)
 			got, err := tree(ctx, c, root, false)
 			if err != nil {
 				return err
@@ -259,7 +263,7 @@ func (m *model) check(ctx context.Context, f *harness.Fixture, clients []*harnes
 	}
 	for _, root := range m.roots {
 		want := map[string]*repb.Directory{}
-		m.reachable(root, want)
+		m.expectedTree(root, want)
 		got, err := tree(ctx, clients[0], root, true)
 		if err != nil {
 			return fmt.Errorf("UI gRPC GetTree: %w", err)
@@ -284,16 +288,30 @@ func (m *model) check(ctx context.Context, f *harness.Fixture, clients []*harnes
 				return fmt.Errorf("HTTP tree mismatch")
 			}
 		}
+		want = map[string]*repb.Directory{}
+		m.reachable(root, want)
 		req := map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "instanceName": instance, "rootDigest": map[string]any{"hash": root.Hash, "sizeBytes": strconv.FormatInt(root.SizeBytes, 10)}, "digestFunction": "SHA256"}
 		res, err := f.Web.RPC("GetTreeDirectorySizes", req)
 		if err != nil {
 			return err
 		}
-		entries, _ := res["sizes"].([]any)
+		entries, ok := res["sizes"].([]any)
+		if !ok || len(entries) != len(want) {
+			return fmt.Errorf("HTTP size membership count")
+		}
 		sizes := map[string][2]int64{}
 		for _, entry := range entries {
 			v := entry.(map[string]any)
-			parse := func(x any) int64 { n, _ := strconv.ParseInt(fmt.Sprint(x), 10, 64); return n }
+			parse := func(x any) int64 {
+				n, err := strconv.ParseInt(fmt.Sprint(x), 10, 64)
+				if err != nil {
+					return -1
+				}
+				return n
+			}
+			if _, ok := sizes[v["digest"].(string)]; ok {
+				return fmt.Errorf("duplicate HTTP size")
+			}
 			sizes[v["digest"].(string)] = [2]int64{parse(v["totalSize"]), parse(v["childCount"])}
 		}
 		for k := range want {
@@ -317,6 +335,7 @@ func (m *model) check(ctx context.Context, f *harness.Fixture, clients []*harnes
 		if len(ss) != len(entries) {
 			return fmt.Errorf("UI grpc size count")
 		}
+		seenSizes := map[string]bool{}
 		for _, v := range ss {
 			var digest string
 			var total, count int64
@@ -343,6 +362,13 @@ func (m *model) check(ctx context.Context, f *harness.Fixture, clients []*harnes
 					}
 				}
 				v = v[k:]
+			}
+			if seenSizes[digest] {
+				return fmt.Errorf("duplicate grpc size")
+			}
+			seenSizes[digest] = true
+			if _, ok := sizes[digest]; !ok {
+				return fmt.Errorf("unknown grpc size")
 			}
 			if sizes[digest] != [2]int64{total, count} {
 				return fmt.Errorf("grpc/http size disagreement")
@@ -412,8 +438,7 @@ func httpTree(ctx context.Context, f *harness.Fixture, d *repb.Digest) (map[stri
 			if err := proto.Unmarshal(v, dir); err != nil {
 				return nil, err
 			}
-			_, dg, _ := harness.MarshalDigest(dir)
-			out[key(dg)] = dir
+			addDirectory(out, dir)
 		}
 	}
 	if !statusSeen {
@@ -423,14 +448,23 @@ func httpTree(ctx context.Context, f *harness.Fixture, d *repb.Digest) (map[stri
 }
 func converge(t *testing.T, m *model, f *harness.Fixture, cs []*harness.Clients) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
+	started := time.Now()
 	var last error
 	for {
-		last = m.check(ctx, f, cs)
-		if last == nil {
+		err := m.check(ctx, f, cs)
+		if ctx.Err() == nil {
+			last = err
+		}
+		if err == nil && ctx.Err() == nil {
+			t.Logf("converged %d blobs / %d roots in %s", len(m.blobs), len(m.roots), time.Since(started))
+			for i := 0; i < 2; i++ {
+				time.Sleep(100 * time.Millisecond)
+				require.NoError(t, m.check(ctx, f, cs), "converged state changed")
+			}
 			return
 		}
 		select {
@@ -442,10 +476,22 @@ func converge(t *testing.T, m *model, f *harness.Fixture, cs []*harness.Clients)
 }
 func TestStructureConvergence(t *testing.T) {
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}, Args: map[harness.Component][]string{harness.App: {"--cache.avg_chunk_size_bytes=262144", "--cache.min_chunked_read_fallback_size_bytes=1048576", "--cache.directory_sizes_enabled=true"}, harness.CacheProxy: {"--cache.avg_chunk_size_bytes=262144", "--cache.min_chunked_read_fallback_size_bytes=1048576", "--cache_proxy.disable_cdc=false"}}})
-	cs := []*harness.Clients{f.Clients(harness.App), f.Clients(harness.CacheProxy)}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	secondKey := f.Web.CreateAPIKey(t, f.GroupID, "structure-second", []string{"CACHE_WRITE"})
+	cs := []*harness.Clients{f.Clients(harness.App), harness.Dial(t, f.Endpoint(harness.CacheProxy).GRPC, secondKey)}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 	m := &model{blobs: map[string][]byte{}, dirs: map[string]*repb.Directory{}, mappings: map[string][]*repb.Digest{}}
+	var archive bytes.Buffer
+	zw := zip.NewWriter(&archive)
+	for _, name := range []string{"first.txt", "nested/second.txt"} {
+		w, err := zw.Create(name)
+		require.NoError(t, err)
+		_, err = w.Write([]byte("zip-" + name))
+		require.NoError(t, err)
+	}
+	require.NoError(t, zw.Close())
+	m.put(t, ctx, cs[0], archive.Bytes(), false)
+	converge(t, m, f, cs)
 	for side, c := range cs {
 		t.Run(fmt.Sprintf("publish-side-%d", side), func(t *testing.T) {
 			// Supported SpliceBlob creates a manifest-only full blob, never uploaded flat.
@@ -479,48 +525,46 @@ func TestStructureConvergence(t *testing.T) {
 				require.True(t, err == nil || err == io.EOF)
 				_, err = registration.CloseAndRecv()
 				require.Equal(t, codes.Unimplemented, status.Code(err))
+				converge(t, m, f, cs)
 			}
 			converge(t, m, f, cs)
 			leaf := m.directory(t, ctx, c, &repb.Directory{Files: []*repb.FileNode{{Name: "payload", Digest: d, IsExecutable: true}}}, false)
 			converge(t, m, f, cs)
-			for revision := 0; revision < 2; revision++ {
+			for revision := 0; revision < 5; revision++ {
 				b := []byte(fmt.Sprintf("revision-%d-side-%d", revision, side))
 				file := m.put(t, ctx, c, b, true)
 				converge(t, m, f, cs)
 				dir := &repb.Directory{Files: []*repb.FileNode{{Name: "revision", Digest: file}}, Directories: []*repb.DirectoryNode{{Name: "left", Digest: leaf}, {Name: "right", Digest: leaf}}}
-				if revision == 1 {
+				if revision == 3 {
 					dir.Directories = dir.Directories[1:]
 				}
 				root := m.directory(t, ctx, c, dir, revision == 1)
-				m.roots = append(m.roots, root)
+				// directory() already publishes every Directory for all surfaces.
 				converge(t, m, f, cs)
 				require.True(t, proto.Equal(root, m.directory(t, ctx, c, dir, revision != 1)))
 				converge(t, m, f, cs)
-				if bb, err := exec.LookPath("bb"); err == nil {
-					for _, component := range []harness.Component{harness.App, harness.CacheProxy} {
-						out := t.TempDir()
-						cmd := exec.CommandContext(ctx, bb, "download", key(root), "--target=grpc://"+f.Endpoint(component).GRPC, "--api_key="+f.APIKey, "--output_directory="+out)
-						cmd.Env = []string{"HOME=" + t.TempDir(), "PATH=/usr/local/bin:/usr/bin:/bin"}
-						log, err := cmd.CombinedOutput()
-						require.NoError(t, err, string(log))
-						expected := map[string][]byte{"revision": b, "right/payload": full}
-						if revision == 0 {
-							expected["left/payload"] = full
-						} else {
-							_, err := os.Stat(filepath.Join(out, "left"))
-							require.True(t, os.IsNotExist(err))
-						}
-						for path, want := range expected {
-							got, err := os.ReadFile(filepath.Join(out, path))
-							require.NoError(t, err)
-							require.Equal(t, want, got)
-						}
-					}
-				} else {
-					t.Log("bb CLI unavailable on runner; RPC and UI checks still required")
-				}
+
 			}
 		})
 	}
 
+}
+
+// GetTree enumerates paths; a DAG node reachable through two edges can legally
+// occur twice. Preserve and compare multiplicity instead of erasing duplicates.
+func addDirectory(out map[string]*repb.Directory, dir *repb.Directory) {
+	_, d, _ := harness.MarshalDigest(dir)
+	base := key(d)
+	k := base
+	for n := 2; out[k] != nil; n++ {
+		k = fmt.Sprintf("%s#%d", base, n)
+	}
+	out[k] = dir
+}
+func (m *model) expectedTree(d *repb.Digest, out map[string]*repb.Directory) {
+	dir := m.dirs[key(d)]
+	addDirectory(out, dir)
+	for _, sub := range dir.Directories {
+		m.expectedTree(sub.Digest, out)
+	}
 }

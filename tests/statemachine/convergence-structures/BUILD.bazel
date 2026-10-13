@@ -3,8 +3,29 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["structures_test.go"],
+    srcs = ["structures_test.go", "surfaces_test.go", "lifecycle_test.go"],
     tags = ["local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@org_golang_google_genproto//googleapis/devtools/build/v1:go_default_library",
+        "@org_golang_google_protobuf//types/known/anypb:go_default_library",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_protobuf//encoding/protojson:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+    ],
+)
+
+go_test(
+    name = "delete_repro",
+    size = "large",
+    timeout = "long",
+    srcs = ["structures_test.go", "surfaces_test.go", "delete_test.go"],
+    tags = ["bug", "local", "requires-network"],
     deps = [
         "//harness:go_default_library",
         "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
@@ -13,6 +34,48 @@ go_test(
         "@org_golang_google_grpc//codes:go_default_library",
         "@org_golang_google_grpc//status:go_default_library",
         "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_protobuf//encoding/protojson:go_default_library",
         "@org_golang_google_protobuf//proto:go_default_library",
     ],
+    args = ["-test.run=TestDeleteWarmedStructureBlob"],
+)
+
+go_test(
+    name = "splice_repro",
+    size = "large",
+    timeout = "long",
+    srcs = ["structures_test.go", "surfaces_test.go", "splice_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_protobuf//encoding/protojson:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+    ],
+    args = ["-test.run=TestSpliceReadSurfaces"],
+)
+
+go_test(
+    name = "zip_repro",
+    size = "large",
+    timeout = "long",
+    srcs = ["structures_test.go", "surfaces_test.go", "zip_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_protobuf//encoding/protojson:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+    ],
+    args = ["-test.run=TestZipContentOffset"],
 )
