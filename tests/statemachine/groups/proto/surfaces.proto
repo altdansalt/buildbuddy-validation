@@ -1,0 +1,32 @@
+// Wire-compatible subset of released v2.314.0 UI request/response messages.
+syntax = "proto3";
+package group_surfaces;
+import "proto/context.proto";
+import "proto/acl.proto";
+message UpdateInvocationRequest {
+ context.RequestContext request_context = 1;
+ string invocation_id = 2;
+ acl.ACL acl = 3;
+}
+message UpdateInvocationResponse { context.ResponseContext response_context = 1; }
+message SnapshotKey { string instance_name = 1; string snapshot_id = 6; }
+message InvalidateSnapshotRequest { context.RequestContext request_context = 1; SnapshotKey snapshot_key = 2; }
+message InvalidateSnapshotResponse { context.ResponseContext response_context = 1; }
+message GetExecutionNodesRequest { context.RequestContext request_context = 1; }
+message ExecutionNode { string host = 1; string os_family = 5; string arch = 6; string pool = 7; string version = 8; string executor_id = 9; string executor_host_id = 10; }
+message GetExecutionNodesResponse {
+ context.ResponseContext response_context = 1;
+ repeated Executor executor = 2;
+ message Executor { ExecutionNode node = 1; bool is_default = 2; }
+ bool user_owned_executors_supported = 3;
+}
+message GetInvocationOwnerRequest { context.RequestContext request_context = 1; string invocation_id = 2; }
+message GetInvocationOwnerResponse { context.ResponseContext response_context = 1; string group_id = 2; string group_url = 3; }
+message InvocationLookup { string invocation_id = 1; }
+message GetInvocationRequest { context.RequestContext request_context = 1; InvocationLookup lookup = 2; }
+message Invocation { string invocation_id = 1; string user = 4; acl.ACL acl = 20; uint64 attempt = 25; }
+message GetInvocationResponse { context.ResponseContext response_context = 1; repeated Invocation invocation = 2; }
+message GetEventLogChunkRequest { context.RequestContext request_context = 1; string invocation_id = 2; string chunk_id = 3; int32 min_lines = 4; int32 type = 5; }
+message GetEventLogChunkResponse { context.ResponseContext response_context = 1; string previous_chunk_id = 2; string next_chunk_id = 3; bytes buffer = 4; bool live = 5; }
+message IndexRequest { context.RequestContext request_context = 1; string namespace = 4; int32 replacement_strategy = 5; }
+message IndexResponse { context.ResponseContext response_context = 1; }
