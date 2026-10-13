@@ -123,3 +123,56 @@ Severity remains **medium** for incorrect builds, stale temporary data and
 potential disk accumulation under enabled recycling. The demonstrated exposure
 is between matching same-group actions, not a cross-group security boundary.
 No broader isolation claim or source patch was tested.
+
+## Version history
+
+Tested on 2026-10-13 using the unchanged bug-tagged reproducer from
+`origin/area/executor-runner-recycling` at `06685da3d2ed30e8f259ddd5e30de239f360c474`.
+App, Redis and executor were started inside each test on hosted `bb remote`
+runners, with fixture-local endpoints and disposable local credentials.
+No BuildBuddy component was built from source.
+
+| Enterprise release (release date, UTC) | Result | BuildBuddy invocation |
+| --- | --- | --- |
+| v2.314.0 (2026-10-08) | Reproduces | [run](https://app.buildbuddy.io/invocation/67bf6e91-6aa2-4b10-b212-179a15145221) |
+| v2.313.0 (2026-10-06) | Reproduces | [run](https://app.buildbuddy.io/invocation/53dcacbe-6977-4e84-a1ad-6edf06a147d4) |
+| v2.290.0 (2026-07-29) | Reproduces | [run](https://app.buildbuddy.io/invocation/1ae616e2-dc83-4bd4-8c12-a2a248109cae) |
+| v2.275.0 (2026-06-04) | Reproduces | [run](https://app.buildbuddy.io/invocation/3d69a38b-95b0-4744-9b49-8624ec3b1d20) |
+| v2.258.0 (2026-04-09) | Reproduces | [run](https://app.buildbuddy.io/invocation/ca9f9ab1-6323-47d8-ac02-18ac93ba9645); [independent repeat](https://app.buildbuddy.io/invocation/006441e1-eb3b-42dd-81ad-3338ecc8a7e5) |
+
+All five releases failed at the finding's intended assertion: The recycled
+action returned OK, exit 42 and "LEAK: private-first-action-data", using the
+same workspace.
+The oldest release was reproduced in two independent fresh fixtures.
+
+**Earliest tested reproducing release: v2.258.0 (2026-04-09).** The defect
+was present at or before that release; its actual introduction is unknown.
+No earlier release or known-good boundary was tested, so this is an upper
+bound on introduction, not evidence that v2.258.0 introduced it.
+
+No release-specific configuration changes were needed for these five releases.
+
+Command template, substituting the matching digests from the table below:
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/executor/runner-recycling:tmp_leak \
+  --test_tag_filters=bug --nocache_test_results --test_output=all \
+  --test_arg=-harness.app_image=gcr.io/flame-public/buildbuddy-app-enterprise@<app-digest> \
+  --test_arg=-harness.executor_image=gcr.io/flame-public/buildbuddy-executor-enterprise@<executor-digest>
+```
+
+### Exact release pins
+
+Both components were overridden together. These linux/amd64 manifest digests
+were resolved from the GCR registry API, and the fixture logs identify the
+requested digest references. App repository:
+`gcr.io/flame-public/buildbuddy-app-enterprise`; executor repository:
+`gcr.io/flame-public/buildbuddy-executor-enterprise`.
+
+| Enterprise release | App digest | Executor digest |
+| --- | --- | --- |
+| v2.314.0 | `sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` | `sha256:7d178c9ae49b0749dc0b509c471c1477ed548c8330441d37fed3b5a68ab364b8` |
+| v2.313.0 | `sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` | `sha256:8f7c2662f5fcd0ab888113f6d36d31cde8b8ea254434a8177cf6996b01155afe` |
+| v2.290.0 | `sha256:f3b285107f28da495e9496dd848857ce0cf6cddbf3fac8743b259c2a7a8678b6` | `sha256:2c65048231e21ecf0c60623bc5f8ccaf494e82828077c5064aa994909e15607a` |
+| v2.275.0 | `sha256:75ffd43cf6dc14ccf5a652b760d7e4d7390dfa7870524c57e7f354f271e96db1` | `sha256:d2dbe25032467449c80e9eb18002d56b57bcf5247cba267ab886022415b30956` |
+| v2.258.0 | `sha256:f7b499d817581e58c1fe826c6441a7773519488d4500dc6ffafad387d2c990c4` | `sha256:500703561ba144c64b12a36f0d3350422f09efe693b8e24592414958ea6753cd` |
