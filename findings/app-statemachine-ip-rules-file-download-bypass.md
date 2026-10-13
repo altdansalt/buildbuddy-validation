@@ -26,7 +26,7 @@ The bypass is permanent, not a transient cache window: it is structural. `Enforc
 
 Config needed (not defaults): `--auth.ip_rules.enable=true`, `--auth.trust_xforwardedfor_header=true` (so the client IP can be set per request), and `--auth.api_key_group_cache_ttl=1s` for speed. Rule enforcement itself is on via `SetIPRulesConfig`. App-only fixture; no proxy, executor, or OLAP.
 
-Reproductions: [run 1](https://app.buildbuddy.io/invocation/973f45f3-c58d-487a-b122-788a74d1f0b5) and run 2 (see below); earlier runs of the original suite: e9889ace-69d4-4af5-81b2-7d7996268cd2 and 672a500d-1d71-4cff-aab8-1bd252f13876. The baseline download (200 before the rule) and enforced controls rule out harness error.
+Reproductions: [run 1](https://app.buildbuddy.io/invocation/973f45f3-c58d-487a-b122-788a74d1f0b5) and [run 2](https://app.buildbuddy.io/invocation/c2443a0b-0115-4e19-92ab-3f5b393ea29b); earlier runs of the original suite: e9889ace-69d4-4af5-81b2-7d7996268cd2 and 672a500d-1d71-4cff-aab8-1bd252f13876. The baseline download (200 before the rule) and enforced controls rule out harness error.
 
 ## Logs excerpt
 
