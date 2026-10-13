@@ -28,15 +28,26 @@ const instance = "file-cache"
 // REAPI FileNode identifies content by digest; execution must see that content.
 // v2.314.0 filecache.go documents that eviction unlinks only cache-owned links.
 func TestFileCacheProperties(t *testing.T) {
+	for _, mode := range []string{"hardlink", "clone-flag", "reflink"} {
+		t.Run(mode, func(t *testing.T) { fileCacheProperties(t, mode) })
+	}
+}
+func fileCacheProperties(t *testing.T, mode string) {
 	t.Logf("seed=%d iterations=%d", *seed, *iterations)
 	if *iterations < 1 || *iterations > 100 {
 		t.Fatal("iterations must be 1..100")
 	}
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}, Config: map[harness.Component]harness.Config{harness.Executor: {"executor": harness.Config{"local_cache_size_bytes": cacheSize}}}})
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}, Config: map[harness.Component]harness.Config{harness.Executor: {"executor": harness.Config{"local_cache_size_bytes": cacheSize, "local_cache_always_clone": mode != "hardlink", "enable_fastcopy_reflinking": mode == "reflink"}}}})
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	c := f.Clients(harness.App)
 	docker := fixtureDocker(t, ctx, f)
+	if mode == "reflink" {
+		out, err := dockerRaw(ctx, dockerHost(t, ctx, f), "exec", f.Endpoint(harness.Executor).Container, "sh", "-c", "echo probe >/data/reflink-source; cp --reflink=always /data/reflink-source /data/reflink-dest")
+		if err != nil {
+			t.Skipf("fixture filesystem cannot clone (configuration constraint): %s: %v", out, err)
+		}
+	}
 	r := rand.New(rand.NewSource(*seed))
 	upload := func(n int) *repb.Digest {
 		b := make([]byte, n)
@@ -224,7 +235,7 @@ func dockerHost(t *testing.T, ctx context.Context, f *harness.Fixture) string {
 		hosts = append(hosts, "unix://"+s)
 	}
 	for _, h := range hosts {
-		if _, err := dockerRaw(ctx, h, "inspect", f.Endpoint(harness.Executor).Container); err == nil {
+		if _, err := dockerRaw(ctx, h, "inspect", fixtureContainer(f)); err == nil {
 			return h
 		}
 	}
@@ -241,4 +252,11 @@ func fixtureDocker(t *testing.T, ctx context.Context, f *harness.Fixture) func(.
 		}
 		return string(b)
 	}
+}
+
+func fixtureContainer(f *harness.Fixture) string {
+	if ep := f.Endpoints[harness.Executor]; ep != nil {
+		return ep.Container
+	}
+	return f.Endpoint(harness.App).Container
 }
