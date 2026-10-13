@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"mime"
 	"net"
 	"net/http"
@@ -33,36 +32,6 @@ func fixture(t *testing.T) (*harness.Fixture, string) {
 	l.Close()
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}, DockerArgs: map[harness.Component][]string{harness.App: {"-p", fmt.Sprintf("127.0.0.1:%d:9090", port)}}})
 	return f, fmt.Sprintf("http://127.0.0.1:%d", port)
-}
-
-func request(t *testing.T, client *http.Client, method, target, ct string, body []byte, headers map[string]string) (*http.Response, []byte) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	r, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ct != "" {
-		r.Header.Set("Content-Type", ct)
-	}
-	for k, v := range headers {
-		r.Header.Set(k, v)
-	}
-	resp, err := client.Do(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("%s %s: status=%d content-type=%q bytes=%d", method, r.URL.Path, resp.StatusCode, resp.Header.Get("Content-Type"), len(b))
-	if resp.StatusCode >= 400 {
-		t.Logf("error body: %s", b)
-	}
-	return resp, b
 }
 
 func TestHTTP(t *testing.T) {
