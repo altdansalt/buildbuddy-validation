@@ -25,7 +25,7 @@ go_test(
     size = "large",
     timeout = "long",
     srcs = ["helpers_test.go", "collision_test.go"],
-    tags = ["bug", "local", "requires-network"],
+    tags = ["local", "requires-network"],
     deps = [
         "//harness:go_default_library",
         "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
