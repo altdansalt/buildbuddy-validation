@@ -11,8 +11,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -110,8 +113,9 @@ func TestFetchBlobStateMachine(t *testing.T) {
 	go origin.Serve(listener)
 	t.Cleanup(func() { origin.Close() })
 	port := listener.Addr().(*net.TCPAddr).Port
-	originURL := fmt.Sprintf("http://host.docker.internal:%d/asset", port)
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}, Args: map[harness.Component][]string{harness.App: {"--remote_asset.allowed_private_ips=0.0.0.0/0"}, harness.CacheProxy: {"--remote_asset.allowed_private_ips=0.0.0.0/0"}}, DockerArgs: map[harness.Component][]string{harness.App: {"--add-host=host.docker.internal:host-gateway"}, harness.CacheProxy: {"--add-host=host.docker.internal:host-gateway"}}})
+	originURL := ""
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}, Args: map[harness.Component][]string{harness.App: {"--remote_asset.allowed_private_ips=0.0.0.0/0"}, harness.CacheProxy: {"--remote_asset.allowed_private_ips=0.0.0.0/0"}}})
+	originURL = fmt.Sprintf("http://%s:%d/asset", fixtureGateway(t, f), port)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	clients := map[harness.Component]*harness.Clients{harness.App: f.Clients(harness.App), harness.CacheProxy: f.Clients(harness.CacheProxy)}
@@ -272,4 +276,26 @@ func checkApp(t *testing.T, ctx context.Context, f *harness.Fixture, c *harness.
 			require.Equal(t, want[1:len(want)-1], out.Data)
 		}
 	}
+}
+
+// Read only the daemon that owns this fixture, including the harness fallback.
+func fixtureGateway(t *testing.T, f *harness.Fixture) string {
+	t.Helper()
+	sockets, _ := filepath.Glob(filepath.Join(os.TempDir(), "bbval-docker-*", "docker.sock"))
+	candidates := [][]string{nil}
+	for _, socket := range sockets {
+		candidates = append(candidates, []string{"--host", "unix://" + socket})
+	}
+	for _, prefix := range candidates {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		args := append(append([]string{}, prefix...), "inspect", "--format", "{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}", f.Endpoint(harness.App).Container)
+		b, err := exec.CommandContext(ctx, "docker", args...).Output()
+		cancel()
+		gateway := strings.TrimSpace(string(b))
+		if err == nil && net.ParseIP(gateway) != nil {
+			return gateway
+		}
+	}
+	t.Fatal("cannot read fixture bridge gateway")
+	return ""
 }
