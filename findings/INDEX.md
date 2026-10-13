@@ -19,6 +19,8 @@
 | [Compressed ByteStream Read accepts nonzero read_limit instead of INVALID_ARGUMENT](app-compression-read-limit.md) | app | low | confirmed | `//tests/app/compression:compressed_read_limit_test` |
 | [Execute reports the action digest as missing when only the command is absent](app-execution-api-missing-command-digest.md) | app | medium | confirmed | `//tests/app/execution-api:missing_command_bug_test` |
 | [GetCapabilities accepts invalid UTF-8 in instance_name](app-grpc-edges-invalid-utf8.md) | app | low | confirmed | `//tests/app/grpc-edges:invalid_utf8_test` |
+| [Artifact download reports missing invocation as HTTP 500](app-http-endpoints-missing-invocation-500.md) | app | low | confirmed | `//tests/app/http-endpoints:missing_invocation_test` |
+| [JSON HTTP RPC responses omit Content-Type](app-http-endpoints-protolet-content-type.md) | app | low | confirmed | `//tests/app/http-endpoints:protolet_content_type_test` |
 | [CAS tree traversal reports an uploaded metadata-only directory as missing](app-input-tree-metadata-only-directory.md) | app / executor | low | confirmed | `//tests/executor/input-tree:input_tree_limits_test` |
 | [v1 GetLog starts at the last log chunk instead of the first](app-invocations-api-log-pagination.md) | app | medium | confirmed | `//tests/app/invocations-api:log_pagination_bug_test` |
 | [Checksum cache hits bypass oldest_content_accepted](app-remote-asset-oldest-content-accepted.md) | app | low | confirmed | `//tests/app/remote-asset:freshness_bug` |
@@ -27,6 +29,7 @@
 | [Bare executor ignores the action's PATH when resolving an unqualified executable](executor-env-args-command-path.md) | executor | medium | confirmed | `//tests/executor/env-args:path_bug_test` |
 | [Valid repeated-digest input tree fails at the filesystem hardlink limit](executor-input-tree-hardlink-limit.md) | executor | low | confirmed | `//tests/executor/input-tree:input_tree_limits_test` |
 | [Malformed input tree with a file/directory name collision returns UNKNOWN instead of INVALID_ARGUMENT](executor-input-tree-name-collision-status.md) | executor | low | rejected | `//tests/executor/input-tree:file_directory_collision_test` |
+| [Docker isolation ignores network=off and retains the configured bridge](executor-isolation-docker-network-off-ignored.md) | executor | high | confirmed | `//tests/executor/isolation-docker:network_off_bug` |
 | [Bare action input mutation poisons subsequent action inputs](executor-isolation-firecracker-input-cache-poisoning.md) | executor | medium | confirmed | `//tests/executor/isolation-firecracker:input_mutation_bug_test` |
 | [Ignored legacy output directories alter modern action execution](executor-outputs-legacy-directory-precreation.md) | executor | low | confirmed | `//tests/executor/outputs:output_paths_precedence (TestOutputPathsIgnoreLegacyDirectoryCreation); legacy-only behavior probe: //tests/executor/outputs:missing_legacy_directory` |
 | [Executor accepts legacy output type mismatches](executor-outputs-legacy-type-mismatch.md) | executor | medium | confirmed | `//tests/executor/outputs:legacy_type_mismatch` |
