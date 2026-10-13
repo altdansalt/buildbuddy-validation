@@ -3,9 +3,17 @@ package schedulerstate_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +21,7 @@ import (
 	"github.com/altdansalt/buildbuddy-validation/harness"
 	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/stretchr/testify/require"
+	bes "google.golang.org/genproto/googleapis/devtools/build/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -20,8 +29,10 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Release-specific wire envelopes avoid depending on BuildBuddy generated Go
@@ -113,6 +124,9 @@ func recv(t *testing.T, s grpc.ClientStream) []byte {
 }
 
 type model struct {
+	fixture       *harness.Fixture
+	nodeID        string
+	observer      *harness.Clients
 	exists        bool
 	node          bool
 	queue, active uint64
@@ -120,11 +134,23 @@ type model struct {
 
 func (m model) checkTask(t *testing.T, ctx context.Context, c *harness.Clients, id string) {
 	t.Helper()
-	b := invoke(t, ctx, c, "/scheduler.Scheduler/TaskExists", str(1, id))
-	require.Equal(t, m.exists, scalar(t, b, 1) != 0, "TaskExists %s", id)
+	if m.fixture != nil {
+		m.checkNode(t, ctx, m.fixture, c, m.nodeID)
+	}
+	for _, client := range []*harness.Clients{c, m.observer} {
+		if client == nil {
+			continue
+		}
+		for i := 0; i < 3; i++ {
+			b := invoke(t, ctx, client, "/scheduler.Scheduler/TaskExists", str(1, id))
+			require.Equal(t, m.exists, scalar(t, b, 1) != 0, "TaskExists %s stability sample %d", id, i)
+		}
+	}
 }
 func (m model) checkNode(t *testing.T, ctx context.Context, f *harness.Fixture, c *harness.Clients, id string) {
 	t.Helper()
+	started := time.Now()
+	consecutive := 0
 	require.Eventually(t, func() bool {
 		b := invoke(t, ctx, c, "/buildbuddy.service.BuildBuddyService/GetExecutionNodes", msg(1, str(2, f.GroupID)))
 		count := 0
@@ -149,7 +175,7 @@ func (m model) checkNode(t *testing.T, ctx context.Context, f *harness.Fixture, 
 		web, e := f.Web.RPC("GetExecutionNodes", map[string]any{"requestContext": f.Web.RequestContext(f.GroupID)})
 		require.NoError(t, e)
 		wc := 0
-		for _, v := range webList(web["executor"]) {
+		for _, v := range webList(t, web["executor"]) {
 			n := v.(map[string]any)["node"].(map[string]any)
 			if n["executorId"] == id {
 				wc++
@@ -160,7 +186,7 @@ func (m model) checkNode(t *testing.T, ctx context.Context, f *harness.Fixture, 
 				require.Equal(t, "v2.314.0", n["version"])
 				require.Equal(t, "1073741824", n["assignableMemoryBytes"])
 				require.Equal(t, "1000", n["assignableMilliCpu"])
-				if jsonNumber(n["currentQueueLength"]) != m.queue || jsonNumber(n["activeActionCount"]) != m.active {
+				if jsonNumber(t, n["currentQueueLength"]) != m.queue || jsonNumber(t, n["activeActionCount"]) != m.active {
 					return false
 				}
 			}
@@ -169,11 +195,38 @@ func (m model) checkNode(t *testing.T, ctx context.Context, f *harness.Fixture, 
 		if m.node {
 			expected = 1
 		}
-		return count == expected && wc == expected
+		if count != expected || wc != expected {
+			consecutive = 0
+			return false
+		}
+		consecutive++
+		return consecutive >= 3
 	}, 30*time.Second, 100*time.Millisecond, "registration model %+v", m)
+	t.Logf("registration converged and stayed stable across three samples in %s", time.Since(started))
 }
-func webList(v any) []any     { a, _ := v.([]any); return a }
-func jsonNumber(v any) uint64 { f, _ := v.(float64); return uint64(f) }
+
+// Proto JSON legitimately omits empty repeated fields and zero scalars.
+// Non-absent values must have the declared JSON type; malformed values fail.
+func webList(t *testing.T, v any) []any {
+	t.Helper()
+	if v == nil {
+		return nil
+	}
+	a, ok := v.([]any)
+	require.True(t, ok, "expected JSON list, got %T", v)
+	return a
+}
+func jsonNumber(t *testing.T, v any) uint64 {
+	t.Helper()
+	if v == nil {
+		return 0
+	}
+	f, ok := v.(float64)
+	require.True(t, ok, "expected numeric JSON scalar, got %T", v)
+	require.GreaterOrEqual(t, f, float64(0))
+	require.Equal(t, f, float64(uint64(f)))
+	return uint64(f)
+}
 
 func TestSchedulerStateMachine(t *testing.T) {
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor, harness.CacheProxy}})
@@ -184,7 +237,8 @@ func TestSchedulerStateMachine(t *testing.T) {
 	id := "scheduler-model-executor"
 	pool := "scheduler-model"
 	taskID := "scheduler-model-task"
-	m := model{}
+	observerKey := f.Web.CreateAPIKey(t, f.GroupID, "scheduler-state-observer", []string{"CACHE_WRITE", "ORG_ADMIN"})
+	m := model{fixture: f, nodeID: id, observer: harness.Dial(t, f.Endpoint(harness.App).GRPC, observerKey)}
 	m.checkNode(t, ctx, f, c, id)
 	m.checkTask(t, ctx, c, taskID)
 	reg := stream(t, ctx, c, "RegisterAndStreamWork")
@@ -384,13 +438,20 @@ func TestSchedulerStateMachine(t *testing.T) {
 
 func testExecution(t *testing.T, ctx context.Context, f *harness.Fixture, c *harness.Clients) {
 	t.Helper()
-	root, e := c.UploadProto(ctx, "scheduler-real", &repb.Directory{})
+	cli := releasedCLI(t, ctx)
+	input, e := f.Clients(harness.CacheProxy).Upload(ctx, "scheduler-real", []byte("input artifact"))
 	require.NoError(t, e)
-	cmd, e := c.UploadProto(ctx, "scheduler-real", &repb.Command{Arguments: []string{"/bin/sh", "-c", "printf lifecycle"}, Platform: &repb.Platform{Properties: []*repb.Platform_Property{{Name: "OSFamily", Value: "linux"}, {Name: "Arch", Value: "amd64"}, {Name: "workload-isolation-type", Value: "none"}}}})
+	root, e := c.UploadProto(ctx, "scheduler-real", &repb.Directory{Files: []*repb.FileNode{{Name: "input", Digest: input}}})
+	require.NoError(t, e)
+	cmd, e := c.UploadProto(ctx, "scheduler-real", &repb.Command{Arguments: []string{"/bin/sh", "-c", "sleep 9; printf lifecycle; printf diagnostic >&2; printf artifact > output; exit 7"}, OutputPaths: []string{"output"}, Platform: &repb.Platform{Properties: []*repb.Platform_Property{{Name: "OSFamily", Value: "linux"}, {Name: "Arch", Value: "amd64"}, {Name: "workload-isolation-type", Value: "none"}}}})
 	require.NoError(t, e)
 	ad, e := c.UploadProto(ctx, "scheduler-real", &repb.Action{CommandDigest: cmd, InputRootDigest: root, DoNotCache: true, Timeout: durationpb.New(30 * time.Second)})
 	require.NoError(t, e)
 	invocation := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	createInvocation(t, ctx, c, invocation)
+	invView, err := f.Web.RPC("GetInvocation", map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "lookup": map[string]any{"invocationId": invocation}})
+	require.NoError(t, err)
+	require.Len(t, webList(t, invView["invocation"]), 1)
 	rm, e := proto.Marshal(&repb.RequestMetadata{ToolInvocationId: invocation})
 	require.NoError(t, e)
 	ctx = metadata.AppendToOutgoingContext(ctx, "build.bazel.remote.execution.v2.requestmetadata-bin", string(rm))
@@ -398,11 +459,20 @@ func testExecution(t *testing.T, ctx context.Context, f *harness.Fixture, c *har
 		s, e := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: "scheduler-real", ActionDigest: ad, SkipCacheLookup: true, DigestFunction: repb.DigestFunction_SHA256})
 		require.NoError(t, e)
 		name := ""
+		sawExecuting := false
 		var result *repb.ExecuteResponse
 		for {
 			op, e := s.Recv()
 			require.NoError(t, e)
 			name = op.Name
+			if !op.Done {
+				stage := &repb.ExecuteOperationMetadata{}
+				require.NoError(t, op.GetMetadata().UnmarshalTo(stage))
+				if stage.GetStage() == repb.ExecutionStage_EXECUTING && !sawExecuting {
+					sawExecuting = true
+					checkExecuting(t, ctx, f, c, invocation, name)
+				}
+			}
 			if op.Done {
 				require.Nil(t, op.GetError())
 				result = &repb.ExecuteResponse{}
@@ -410,8 +480,21 @@ func testExecution(t *testing.T, ctx context.Context, f *harness.Fixture, c *har
 				break
 			}
 		}
+		require.True(t, sawExecuting, "Execute must expose executing stage")
 		require.Zero(t, result.GetStatus().GetCode())
-		require.Zero(t, result.GetResult().GetExitCode())
+		require.Equal(t, int32(7), result.GetResult().GetExitCode())
+		require.Len(t, result.GetResult().GetOutputFiles(), 1)
+		for _, client := range []*harness.Clients{c, f.Clients(harness.CacheProxy)} {
+			b, err := client.Read(ctx, "scheduler-real", result.GetResult().GetOutputFiles()[0].GetDigest())
+			require.NoError(t, err)
+			require.Equal(t, "artifact", string(b))
+			stderr := result.GetResult().GetStderrRaw()
+			if d := result.GetResult().GetStderrDigest(); d != nil {
+				stderr, err = client.Read(ctx, "scheduler-real", d)
+				require.NoError(t, err)
+			}
+			require.Equal(t, "diagnostic", string(stderr))
+		}
 		stdout := result.GetResult().GetStdoutRaw()
 		if d := result.GetResult().GetStdoutDigest(); d != nil {
 			stdout, e = c.Read(ctx, "scheduler-real", d)
@@ -439,7 +522,30 @@ func testExecution(t *testing.T, ctx context.Context, f *harness.Fixture, c *har
 				}
 			}
 		}
+		started := time.Now()
 		checkExecutionViews(t, ctx, f, c, invocation, name, result)
+		t.Logf("completion views converged in %s", time.Since(started))
+		for stable := 0; stable < 3; stable++ {
+			time.Sleep(100 * time.Millisecond)
+			checkExecutionViews(t, ctx, f, c, invocation, name, result)
+		}
+		auditUIWait(t, ctx, f, name, result)
+		checkDownloads(t, ctx, f, c, invocation, name, input)
+		checkProfile(t, ctx, f, invocation, name, result)
+		download := result.GetResult().GetOutputFiles()[0].GetDigest()
+		q := url.Values{"request_context": {base64.StdEncoding.EncodeToString(str(2, f.GroupID))}, "invocation_id": {invocation}, "bytestream_url": {"bytestream://" + f.Endpoint(harness.App).InternalGRPC[len("grpc://"):] + "/" + harness.ResourceName("scheduler-real", download, false)}}
+		req, err := http.NewRequestWithContext(ctx, "GET", f.Web.URL+"/file/download?"+q.Encode(), nil)
+		require.NoError(t, err)
+		resp, err := f.Web.Client.Do(req)
+		require.NoError(t, err)
+		bytes, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.NoError(t, err)
+		require.Equal(t, 200, resp.StatusCode)
+		require.Equal(t, "artifact", string(bytes))
+		for _, component := range []harness.Component{harness.App, harness.CacheProxy} {
+			cliExecution(t, ctx, cli, f.Endpoint(component).GRPC, f.APIKey, name, result)
+		}
 		require.Eventually(t, func() bool {
 			b := invoke(t, ctx, c, "/scheduler.Scheduler/TaskExists", str(1, name))
 			return scalar(t, b, 1) == 0
@@ -472,6 +578,13 @@ func checkExecutionViews(t *testing.T, ctx context.Context, f *harness.Fixture, 
 			return false
 		}
 		require.NoError(t, proto.Unmarshal(one(t, r, 13), inline))
+		require.True(t, proto.Equal(projectResponse(result), projectResponse(inline)), "full history response projection")
+		require.Equal(t, uint64(result.GetResult().GetExitCode()), scalar(t, r, 8), "history exit code")
+		statusBytes, err := proto.Marshal(result.GetStatus())
+		require.NoError(t, err)
+		require.True(t, bytes.Equal(statusBytes, one(t, r, 3)), "history status")
+		require.NotEmpty(t, one(t, r, 1), "action digest")
+		require.NotEmpty(t, one(t, r, 7), "command snippet")
 		require.Equal(t, result.GetStatus().GetCode(), inline.GetStatus().GetCode())
 		require.Equal(t, result.GetResult().GetExitCode(), inline.GetResult().GetExitCode())
 		require.True(t, proto.Equal(result.GetResult().GetStdoutDigest(), inline.GetResult().GetStdoutDigest()), "stdout digest differs")
@@ -493,13 +606,14 @@ func checkExecutionViews(t *testing.T, ctx context.Context, f *harness.Fixture, 
 		require.True(t, proto.Equal(appAC, proxyAC), "app/proxy execution response record")
 		cached := &repb.ExecuteResponse{}
 		require.NoError(t, proto.Unmarshal(appAC.GetStdoutRaw(), cached))
+		require.True(t, proto.Equal(projectResponse(result), projectResponse(cached)), "full cached response projection")
 		require.Equal(t, result.GetStatus().GetCode(), cached.GetStatus().GetCode())
 		require.Equal(t, result.GetResult().GetExitCode(), cached.GetResult().GetExitCode())
 		require.True(t, proto.Equal(result.GetResult().GetStdoutDigest(), cached.GetResult().GetStdoutDigest()), "stdout digest differs")
 		require.Equal(t, result.GetResult().GetStdoutRaw(), cached.GetResult().GetStdoutRaw())
 		web, e := f.Web.RPC("GetExecution", map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "executionLookup": map[string]any{"invocationId": invocation, "executionId": id}, "inlineExecuteResponse": true})
 		require.NoError(t, e)
-		a := webList(web["execution"])
+		a := webList(t, web["execution"])
 		if len(a) != 1 {
 			return false
 		}
@@ -514,6 +628,25 @@ func checkExecutionViews(t *testing.T, ctx context.Context, f *harness.Fixture, 
 		require.NoError(t, e)
 		ui := &repb.ExecuteResponse{}
 		require.NoError(t, (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, ui))
+		wantJSON, err := protojson.Marshal(projectResponse(result))
+		require.NoError(t, err)
+		gotJSON, err := protojson.Marshal(projectResponse(ui))
+		require.NoError(t, err)
+		require.JSONEq(t, string(wantJSON), string(gotJSON), "full standard HTTP response projection")
+		require.Equal(t, float64(7), row["exitCode"])
+		if len(one(t, r, 11)) == 0 {
+			require.Nil(t, row["taskSize"], "both projections omit task size")
+		}
+		grpcAction := &repb.Digest{}
+		require.NoError(t, proto.Unmarshal(one(t, r, 1), grpcAction))
+		jsonAction, err := json.Marshal(row["actionDigest"])
+		require.NoError(t, err)
+		uiAction := &repb.Digest{}
+		require.NoError(t, protojson.Unmarshal(jsonAction, uiAction))
+		require.True(t, proto.Equal(grpcAction, uiAction), "history action digest gRPC/HTTP")
+		if len(one(t, r, 9)) == 0 {
+			require.Nil(t, row["actionResultDigest"], "both projections omit legacy action-result digest")
+		}
 		require.Equal(t, result.GetStatus().GetCode(), ui.GetStatus().GetCode())
 		require.Equal(t, result.GetResult().GetExitCode(), ui.GetResult().GetExitCode())
 		require.True(t, proto.Equal(result.GetResult().GetStdoutDigest(), ui.GetResult().GetStdoutDigest()), "stdout digest differs")
@@ -534,4 +667,199 @@ func stripAux(v any) {
 			stripAux(v)
 		}
 	}
+}
+
+// Audit the exact HTTP stream consumed by app/invocation/execution_status.tsx.
+func auditUIWait(t *testing.T, ctx context.Context, f *harness.Fixture, id string, want *repb.ExecuteResponse) {
+	t.Helper()
+	b := join(msg(1, str(2, f.GroupID)), str(2, id))
+	frame := make([]byte, 5)
+	binary.BigEndian.PutUint32(frame[1:], uint32(len(b)))
+	req, err := http.NewRequestWithContext(ctx, "POST", f.Web.URL+"/rpc/BuildBuddyService/WaitExecution", bytes.NewReader(append(frame, b...)))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/proto+prefixed")
+	resp, err := f.Web.Client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, 200, resp.StatusCode)
+	completed, trailers := false, false
+	for {
+		header := make([]byte, 5)
+		_, err := io.ReadFull(resp.Body, header)
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		n := binary.BigEndian.Uint32(header[1:])
+		require.Less(t, n, uint32(16<<20))
+		data := make([]byte, n)
+		_, err = io.ReadFull(resp.Body, data)
+		require.NoError(t, err)
+		if header[0]&0x80 != 0 {
+			require.Contains(t, string(data), "Grpc-Status: 0")
+			trailers = true
+			break
+		}
+		require.Zero(t, header[0])
+		op := one(t, data, 2)
+		require.Equal(t, id, string(one(t, op, 1)))
+		if scalar(t, op, 3) == 1 {
+			require.Empty(t, one(t, op, 4))
+			got := &repb.ExecuteResponse{}
+			require.NoError(t, proto.Unmarshal(one(t, one(t, op, 5), 2), got))
+			require.True(t, proto.Equal(want, got), "UI HTTP WaitExecution full response differs")
+			completed = true
+		}
+	}
+	require.True(t, completed, "UI HTTP stream never completed")
+	require.True(t, trailers, "UI HTTP stream missing success trailers")
+	t.Logf("audit UI HTTP WaitExecution agrees for %s", id)
+}
+
+// Auxiliary metadata is enriched for history/cache; all standard fields remain comparable.
+func projectResponse(r *repb.ExecuteResponse) *repb.ExecuteResponse {
+	p := proto.Clone(r).(*repb.ExecuteResponse)
+	if md := p.GetResult().GetExecutionMetadata(); md != nil {
+		md.AuxiliaryMetadata = nil
+	}
+	return p
+}
+
+// Use a released CLI artifact, never compile BuildBuddy source or invoke Bazel.
+func releasedCLI(t *testing.T, ctx context.Context) string {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://github.com/buildbuddy-io/bazel/releases/download/5.0.492/bazel-5.0.492-linux-x86_64", nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
+	require.NoError(t, err)
+	require.Equal(t, "e9e996a1a01555e45433acf9432f9d40d5bda437812a830d6701fe9b09853df9", fmt.Sprintf("%x", sha256.Sum256(b)))
+	path := filepath.Join(t.TempDir(), "bb")
+	require.NoError(t, os.WriteFile(path, b, 0755))
+	return path
+}
+func cliExecution(t *testing.T, ctx context.Context, cli, target, key, id string, want *repb.ExecuteResponse) {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, cli, "execution", "get", id, "--target=grpc://"+target, "--api_key="+key, "--output=json")
+	cmd.Dir = t.TempDir()
+	cmd.Env = []string{"HOME=" + cmd.Dir, "PATH=/usr/bin:/bin"}
+	output, err := cmd.Output()
+	require.NoError(t, err, "released CLI execution get against fixture")
+	var document any
+	require.NoError(t, json.Unmarshal(output, &document))
+	stripAux(document)
+	b, err := json.Marshal(document)
+	require.NoError(t, err)
+	got := &repb.ExecuteResponse{}
+	require.NoError(t, (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(b, got))
+	wantJSON, err := protojson.Marshal(projectResponse(want))
+	require.NoError(t, err)
+	gotJSON, err := protojson.Marshal(projectResponse(got))
+	require.NoError(t, err)
+	require.JSONEq(t, string(wantJSON), string(gotJSON), "CLI full standard response")
+}
+
+func createInvocation(t *testing.T, ctx context.Context, c *harness.Clients, id string) {
+	t.Helper()
+	first := join(msg(1, msg(3, nil)), msg(2, msg(9, nil)), msg(5, join(str(1, id), num(2, uint64(time.Now().UnixMilli())), str(3, "8.4.2"), str(4, "--color=no"), str(5, "build"))))
+	last := join(msg(1, msg(9, nil)), msg(14, join(num(2, uint64(time.Now().UnixMilli())), msg(3, str(1, "SUCCESS")))), num(20, 1))
+	stream, err := c.BES.PublishBuildToolEventStream(ctx)
+	require.NoError(t, err)
+	sid := &bes.StreamId{BuildId: id, InvocationId: id, Component: bes.StreamId_TOOL}
+	for i, wire := range [][]byte{first, last} {
+		require.NoError(t, stream.Send(&bes.PublishBuildToolEventStreamRequest{OrderedBuildEvent: &bes.OrderedBuildEvent{StreamId: sid, SequenceNumber: int64(i + 1), Event: &bes.BuildEvent{EventTime: timestamppb.Now(), Event: &bes.BuildEvent_BazelEvent{BazelEvent: &anypb.Any{TypeUrl: "type.googleapis.com/build_event_stream.BuildEvent", Value: wire}}}}}))
+	}
+	require.NoError(t, stream.Send(&bes.PublishBuildToolEventStreamRequest{OrderedBuildEvent: &bes.OrderedBuildEvent{StreamId: sid, SequenceNumber: 3, Event: &bes.BuildEvent{EventTime: timestamppb.Now(), Event: &bes.BuildEvent_ComponentStreamFinished{ComponentStreamFinished: &bes.BuildEvent_BuildComponentStreamFinished{Type: bes.BuildEvent_BuildComponentStreamFinished_FINISHED}}}}}))
+	require.NoError(t, stream.CloseSend())
+	for i := int64(1); i <= 3; i++ {
+		ack, err := stream.Recv()
+		require.NoError(t, err)
+		require.Equal(t, i, ack.SequenceNumber)
+	}
+	_, err = stream.Recv()
+	require.Equal(t, io.EOF, err)
+}
+func checkDownloads(t *testing.T, ctx context.Context, f *harness.Fixture, c *harness.Clients, invocation, id string, input *repb.Digest) {
+	t.Helper()
+	wire := invoke(t, ctx, c, "/buildbuddy.service.BuildBuddyService/GetExecutionDownloads", join(msg(1, str(2, f.GroupID)), str(2, invocation), str(3, id)))
+	web, err := f.Web.RPC("GetExecutionDownloads", map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "invocationId": invocation, "executionId": id})
+	require.NoError(t, err)
+	rows := fields(t, wire, 2)
+	jsonRows := webList(t, web["downloads"])
+	require.Len(t, jsonRows, len(rows))
+	require.Empty(t, one(t, wire, 3))
+	require.Nil(t, web["nextPageToken"])
+	for i, row := range rows {
+		require.Equal(t, "input", string(one(t, row, 1)))
+		d := &repb.Digest{}
+		require.NoError(t, proto.Unmarshal(one(t, row, 2), d))
+		require.True(t, proto.Equal(input, d))
+		obj := jsonRows[i].(map[string]any)
+		require.Equal(t, "input", obj["path"])
+		b, err := json.Marshal(obj["digest"])
+		require.NoError(t, err)
+		jd := &repb.Digest{}
+		require.NoError(t, protojson.Unmarshal(b, jd))
+		require.True(t, proto.Equal(input, jd))
+	}
+	t.Logf("execution download surfaces agree on %d remotely fetched inputs (executor file-cache hits are omitted)", len(rows))
+}
+
+func checkExecuting(t *testing.T, ctx context.Context, f *harness.Fixture, c *harness.Clients, invocation, id string) {
+	t.Helper()
+	started := time.Now()
+	consecutive := 0
+	require.Eventually(t, func() bool {
+		b := invoke(t, ctx, c, "/buildbuddy.service.BuildBuddyService/GetExecution", join(msg(1, str(2, f.GroupID)), msg(2, join(str(1, invocation), str(3, id)))))
+		rows := fields(t, b, 2)
+		if len(rows) != 1 || scalar(t, rows[0], 2) != uint64(repb.ExecutionStage_EXECUTING) {
+			consecutive = 0
+			return false
+		}
+		web, err := f.Web.RPC("GetExecution", map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "executionLookup": map[string]any{"invocationId": invocation, "executionId": id}})
+		require.NoError(t, err)
+		a := webList(t, web["execution"])
+		if len(a) != 1 || a[0].(map[string]any)["stage"] != "EXECUTING" {
+			consecutive = 0
+			return false
+		}
+		consecutive++
+		return consecutive >= 3
+	}, 8*time.Second, 100*time.Millisecond, "executing stage gRPC/HTTP")
+	require.Equal(t, uint64(1), scalar(t, invoke(t, ctx, c, "/scheduler.Scheduler/TaskExists", str(1, id)), 1))
+	t.Logf("executing views converged in %s", time.Since(started))
+}
+
+func checkProfile(t *testing.T, ctx context.Context, f *harness.Fixture, invocation, id string, result *repb.ExecuteResponse) {
+	t.Helper()
+	q := url.Values{"request_context": {base64.StdEncoding.EncodeToString(str(2, f.GroupID))}, "invocation_id": {invocation}, "execution_id": {id}, "artifact": {"execution_profile"}}
+	req, err := http.NewRequestWithContext(ctx, "GET", f.Web.URL+"/file/download?"+q.Encode(), nil)
+	require.NoError(t, err)
+	resp, err := f.Web.Client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, 200, resp.StatusCode)
+	var profile struct {
+		Events []struct {
+			Name      string  `json:"name"`
+			Duration  float64 `json:"dur"`
+			Timestamp float64 `json:"ts"`
+		} `json:"traceEvents"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&profile))
+	md := result.GetResult().GetExecutionMetadata()
+	found := false
+	for _, e := range profile.Events {
+		if e.Name != "run command" {
+			continue
+		}
+		found = true
+		require.Equal(t, float64(md.GetExecutionCompletedTimestamp().AsTime().Sub(md.GetExecutionStartTimestamp().AsTime()).Microseconds()), e.Duration)
+		start := min(md.GetQueuedTimestamp().AsTime().UnixMicro(), md.GetWorkerStartTimestamp().AsTime().UnixMicro())
+		require.Equal(t, float64(md.GetExecutionStartTimestamp().AsTime().UnixMicro()-start), e.Timestamp)
+	}
+	require.True(t, found, "profile must expose run command span")
 }

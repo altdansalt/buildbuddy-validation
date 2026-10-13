@@ -81,3 +81,81 @@ No confirmed cross-surface inconsistency was found. Initial development failures
 were due to the default key lacking ORG_ADMIN, ordering unary re-enqueue before
 legacy stream release, comparing deliberately different metadata projections,
 and using structural equality instead of protobuf equality for digests.
+
+## Round 2 extension and remaining coverage
+
+The audit's browser `BuildBuddyService.WaitExecution` framed HTTP stream check
+is retained with the original expectations. Real actions now exit 7 and emit
+stdout, stderr, and a declared output file; file and log bytes are read from app
+and proxy. Standard ExecuteResponse fields are compared in full across history,
+HTTP, and the cached response (auxiliary metadata enrichment is explicitly
+excluded). History status, exit code, command snippet, action digest agreement, and
+consistent omission of legacy task-size/result-digest fields are checked. Three completion samples spaced 100 ms apart repeat all
+history/cache comparisons; test logs report elapsed completion convergence.
+Synthetic TaskExists is checked three times through each of two same-org keys.
+
+Additional source enumeration:
+- `app/invocation/execution_status.tsx`: browser streaming WaitExecution (checked).
+- `app/invocation/invocation_action_card.tsx`: GetExecutionDownloads, command and
+  action CAS fetches, `/file/download?artifact=execution_profile`. Downloads,
+  output file HTTP bytes and profile run-command timing are now checked.
+- `enterprise/server/execution_service/execution_service.go:458`: downloads
+  require a persisted, authorized invocation, not merely request metadata.
+- `enterprise/server/execution_search_service/execution_search_service.go`:
+  SearchExecution and GetExecutionTimeline require analytics storage (not
+  configured by this fixture).
+- `cli/execution/execution.go`: `bb execution get` reads the cached response;
+  the released CLI process is now checked against both app and proxy.
+
+This extension does **not** establish exhaustive conformance. Remaining work:
+analytics fixture; controlled queued snapshots; exact history action/result digest and metadata
+oracle; warmed cache updates/deletes in both directions; and precise node metadata
+oracles. Node observations also accompany every synthetic TaskExists check. Queue/active counts here validate reported
+registration state, not scheduler-derived metrics. Completion stability covers
+300 ms and cannot establish indefinite stability. No divergence finding is
+claimed from absent coverage or configuration requirements.
+
+The test downloads released CLI 5.0.492 from GitHub and checks SHA256
+`e9e996a1a01555e45433acf9432f9d40d5bda437812a830d6701fe9b09853df9`.
+Each CLI process has an isolated HOME and explicit fixture-local target/key; it
+inherits no dispatch credentials. A valid two-event BES invocation is persisted
+and checked before downloading execution artifacts. One input is written via
+the proxy and consumed by the executor through the app. Download lists agree
+in gRPC and browser JSON and their entries match the input digest; file-cache
+hits legitimately produce no remotely-downloaded entry. Output bytes and
+execution profile command-span timestamps/durations match the execution result.
+
+Real actions run for nine seconds so the intermediate EXECUTING history update
+can be observed. The released PublishOperation implementation intentionally
+delays its database update until over five seconds have elapsed, with a
+one-second ticker; the test permits eight seconds and reports observed time.
+This expected transient history lag is distinct from a permanent mismatch.
+HTTP/CLI comparisons cover every standard REAPI JSON field, while unknown
+release extension fields need generated release-specific types for independent
+semantic validation. No product defect is claimed from those projection limits.
+
+Source inspection resolves the ACK acceptance question: unary
+EnqueueTaskReservation calls enqueueOnConnectedExecutor with
+`waitForResponse=true`, and executorHandle returns success only after consuming
+the task-specific response channel. Thus the existing successful unary response
+and the independently received matching reservation establish server-side ACK
+acceptance; merely successful ACK SendMsg would not suffice. See
+`scheduler_server.go:516`, `:565`, `:2952`, and `:3061`.
+
+Round 2 remote validation:
+- Expanded CLI/browser/download/profile suite passed:
+  https://app.buildbuddy.io/invocation/ce65a53b-3906-47e2-8577-ca027e95c955
+- Final duration oracle passed without cached test results:
+  https://app.buildbuddy.io/invocation/f7f62c75-19e0-4892-a785-b0d809e786cf
+- Intermediate-stage probes measured 5.006 s and 5.204 s to history convergence,
+  consistent with the release's deliberate delayed DB update. Those development
+  runs subsequently failed on corrected HTTP request-context and microsecond
+  rounding assumptions, respectively; neither failure is a product finding:
+  https://app.buildbuddy.io/invocation/04f8bf39-b85a-47aa-8b53-498d0cf87a36
+  https://app.buildbuddy.io/invocation/0893ec40-500d-4a35-80ad-13f4454cf5e9
+- Completed views converged in 111–118 ms in these probes; registration checks
+  took 303–307 ms including the required three-sample stability interval. These
+  measurements are polling observations, not upper bounds on all deployments.
+
+No unexpected divergence was confirmed. No finding, shared harness change, or
+PR is included. The remaining coverage above is explicitly unfinished.
