@@ -35,3 +35,12 @@ go_test(
     tags = ["bug", "local", "requires-network"],
     deps = ["//harness:go_default_library"],
 )
+
+go_test(
+    name = "cli_reload_bug_test",
+    srcs = ["helpers_test.go", "round2_helpers_test.go", "cli_reload_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["bug", "local", "requires-network"],
+    deps = ["//harness:go_default_library"],
+)

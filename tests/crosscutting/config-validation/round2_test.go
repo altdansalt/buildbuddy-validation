@@ -34,36 +34,29 @@ func TestConflictingAndFeatureRequiredSettings(t *testing.T) {
 	}
 }
 
-func TestSIGHUPValidReloadAndCLIPrecedence(t *testing.T) {
+func TestSIGHUPValidReload(t *testing.T) {
 	// A dynamic HTTP security header proves that reload changes live behavior.
 	// Startup-only fields such as listener ports are deliberately kept constant.
-	for _, cli := range []bool{false, true} {
-		t.Run(fmt.Sprintf("cli_%v", cli), func(t *testing.T) {
-			opts := harness.Options{Components: []harness.Component{harness.App}, DockerArgs: map[harness.Component][]string{harness.App: {"--publish", "127.0.0.1::9090"}}}
-			if cli {
-				opts.Args = map[harness.Component][]string{harness.App: {"--app.strict_csp_enabled=true"}}
-			}
-			f := harness.Start(t, opts)
-			d := fixtureDocker(t, f)
-			original := baseline(t, f, harness.App)
-			waitCSP(t, f, cli)
-			r := rand.New(rand.NewSource(*seed))
-			t.Logf("reload seed=%d", *seed)
-			// Seeded ordering, with both states guaranteed and repeated transitions.
-			values := []bool{false, true, false, true}
-			r.Shuffle(len(values), func(i, j int) { values[i], values[j] = values[j], values[i] })
-			for i, value := range values {
-				t.Logf("reload=%d strict_csp_enabled=%v", i, value)
-				config := strings.Replace(original, "app:\n", fmt.Sprintf("app:\n    strict_csp_enabled: %v\n", value), 1)
-				marker := fmt.Sprintf("reload-%d-%d", *seed, i)
-				config = replaceSetting(t, config, "server_type: app", "server_type: "+marker)
-				reloadConfig(t, f, d, harness.App, config, false)
-				// Read-only monitoring observation avoids accepting stale CSP
-				// when consecutive samples (or CLI overrides) have equal values.
-				waitReloadMarker(t, publishedAddress(t, f, d, "9090"), marker)
-				waitCSP(t, f, value || cli)
-			}
-		})
+	opts := harness.Options{Components: []harness.Component{harness.App}, DockerArgs: map[harness.Component][]string{harness.App: {"--publish", "127.0.0.1::9090"}}}
+	f := harness.Start(t, opts)
+	d := fixtureDocker(t, f)
+	original := baseline(t, f, harness.App)
+	waitCSP(t, f, false)
+	r := rand.New(rand.NewSource(*seed))
+	t.Logf("reload seed=%d", *seed)
+	// Seeded ordering, with both states guaranteed and repeated transitions.
+	values := []bool{false, true, false, true}
+	r.Shuffle(len(values), func(i, j int) { values[i], values[j] = values[j], values[i] })
+	for i, value := range values {
+		t.Logf("reload=%d strict_csp_enabled=%v", i, value)
+		config := strings.Replace(original, "app:\n", fmt.Sprintf("app:\n    strict_csp_enabled: %v\n", value), 1)
+		marker := fmt.Sprintf("reload-%d-%d", *seed, i)
+		config = replaceSetting(t, config, "server_type: app", "server_type: "+marker)
+		reloadConfig(t, f, d, harness.App, config, false)
+		// Read-only monitoring observation avoids accepting stale CSP
+		// when consecutive samples have equal values.
+		waitReloadMarker(t, publishedAddress(t, f, d, "9090"), marker)
+		waitCSP(t, f, value)
 	}
 }
 
