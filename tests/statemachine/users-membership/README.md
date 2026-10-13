@@ -70,3 +70,19 @@ setup. The small protobuf wire adapter uses the released schema field numbers,
 normal valid messages and the standard proto codec content type; it does not
 exercise malformed wire requests. No shared harness or dependency changes are
 needed, and no product inconsistency is assumed from setup errors.
+
+## Round 2 additions
+
+After every step (not snapshots) the model is compared with: HTTP+gRPC `GetUser`,
+`GetGroupUsers` (3 status filters, no unexpected rows), `GetGroup`, selected
+group/allowedRpc, target-org `GetUserApiKeys`/`GetUserApiKey` (capability mask
+incl. the sticky role-downgrade rule in `userdb.updateUserRole`),
+`AuthService.Authenticate` JWT claims, CAS/AC/ByteStream/Capabilities through
+**both** app and cache proxy (writes via one, reads via the other), public API
+`GetFile`/`GetFileRange`, `/file/download`, HTTP+gRPC `GetCacheMetadata`, and
+`bb ui` (pinned CLI, PTY). Polls are bounded (25 s) and the converged state must
+hold for 1 s. The suite runs with `auth.enable_anonymous_usage=false` and
+`--auth.remote.jwt_cache_ttl=2s`; the default-TTL proxy test asserts eventual
+convergence. Known divergences (`bug`-tagged, in `findings/`):
+`:revocation_bug` (proxy serves removed key ~59 s) and `:download_bug`
+(anonymous usage on).
