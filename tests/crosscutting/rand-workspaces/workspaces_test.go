@@ -133,15 +133,9 @@ tree = rule(implementation = _tree, attrs = {"srcs": attr.label_list(allow_files
 		execution      bool
 	}
 	modes := []mode{{name: "local"}, {name: "cache", endpoint: f.Endpoint(harness.App).GRPC}, {name: "cache-replay", endpoint: f.Endpoint(harness.App).GRPC}, {name: "direct", endpoint: f.Endpoint(harness.App).GRPC, execution: true}, {name: "proxy", endpoint: f.Endpoint(harness.CacheProxy).GRPC, execution: true}}
-	// Strip dispatch credentials and Bazel runfiles environment from nested tools.
-	var env []string
-	for _, e := range os.Environ() {
-		k := strings.SplitN(e, "=", 2)[0]
-		if k == "BUILDBUDDY_API_KEY" || strings.HasPrefix(k, "BB_") || strings.HasPrefix(k, "TEST_") || strings.HasPrefix(k, "RUNFILES") || k == "JAVA_RUNFILES" {
-			continue
-		}
-		env = append(env, e)
-	}
+	// Use an allowlist: do not read or forward dispatch credentials or outer
+	// Bazel runfiles/test variables into nested tools.
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "USER=" + os.Getenv("USER"), "TMPDIR=" + os.TempDir(), "LANG=C.UTF-8"}
 	for _, m := range modes {
 		base := filepath.Join(root, m.name)
 		t.Cleanup(func() {
