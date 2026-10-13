@@ -54,3 +54,22 @@ New round 2 defect reproducer:
 ```sh
 GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/bytestream:compressed_limit_bug_test --test_tag_filters=bug --nocache_test_results
 ```
+
+Round 3 adds `concurrent_property_test`, using the same replay seed. Eight
+rounds race four writers (plain and zstd, distinct upload IDs) with four readers
+of the same digest. Readers check random ranges in both formats against the
+original bytes, allow only empty `NotFound` before publication, and require
+continued visibility after a successful read. Half the rounds start with the
+digest already published. Sixteen more rounds interrupt each upload three times
+at seeded wire offsets, alternating cancellation and half-close, then restart
+from zero using the same upload resource. Explicit zero-byte and full-data
+interruptions supplement random cuts. Unfinished uploads must remain absent;
+completed restarts must return the exact original bytes. Concurrent scheduling
+is intentionally uncontrolled; all payloads, chunks and ranges are seeded.
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/bytestream:concurrent_property_test --config=nobug --nocache_test_results --test_arg=-bytestream.seed=20261013
+```
+
+The compressed-limit finding is a duplicate of
+`findings/app-compression-read-limit.md`; its independent coverage is retained.

@@ -65,3 +65,13 @@ go_test(
     tags = ["bug", "local", "requires-network"],
     deps = DEPS,
 )
+
+go_test(
+    name = "concurrent_property_test",
+    srcs = ["bytestream_test.go", "randomized_test.go", "concurrent_property_test.go"],
+    size = "large",
+    timeout = "long",
+    args = ["-test.run=TestRandomized(ConcurrentReadersWriters|InterruptedRestart)"],
+    tags = ["local", "requires-network"],
+    deps = DEPS,
+)
