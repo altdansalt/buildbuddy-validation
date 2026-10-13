@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "go_default_test",
+    srcs = ["usage_alerts_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_jhump_protoreflect//dynamic:go_default_library",
+        "@com_github_jhump_protoreflect//grpcreflect:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)
