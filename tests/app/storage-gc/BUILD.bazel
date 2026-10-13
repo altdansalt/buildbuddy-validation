@@ -4,7 +4,7 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["storage_gc_test.go"],
+    srcs = ["storage_gc_test.go", "round2_test.go"],
     tags = ["local", "requires-network"],
     deps = [
         "//harness:go_default_library",
