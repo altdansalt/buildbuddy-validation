@@ -234,7 +234,7 @@ func TestMixedLoadStability(t *testing.T) {
 		require.GreaterOrEqual(t, len(early), 10)
 		require.GreaterOrEqual(t, len(late), 10)
 		a, b := median(early), median(late)
-		t.Logf("%s median early=%s late=%s operations=%d", kind, a, b, len(latencies))
+		t.Logf("%s median early=%s late=%s total_operations=%d", kind, a, b, len(latencies))
 		require.LessOrEqual(t, b, 5*a+time.Second, "%s latency drift", kind)
 	}
 }

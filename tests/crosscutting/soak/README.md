@@ -35,3 +35,20 @@ Behavior references:
 - [REAPI ActionCache and Execution contract](https://github.com/bazelbuild/remote-apis/blob/main/build/bazel/remote/execution/v2/remote_execution.proto)
 - [v2.314.0 runner cleanup and recycling](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/remote_execution/runner/runner.go)
 - [v2.314.0 metric definitions](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/server/metrics/metrics.go)
+
+## Validation
+
+[Passing v2.314.0 run](https://app.buildbuddy.io/invocation/0d3978e4-3e1b-41c9-a642-095d7d2ceeec)
+completed the full load with 719 mixed operations and no RPC/data errors. Early
+and late cache medians were 7.98/7.93 ms; execution medians were 16.71/15.04 ms.
+Goroutines and descriptors stayed stable, and executor `/data` stayed at 76 KiB
+after warmup despite the scratch writes. App/proxy images do not include `du`,
+so their physical volume usage remains a follow-up beyond the exposed metrics.
+
+Environment diagnostics:
+- [Redis pull rate limit](https://app.buildbuddy.io/invocation/9e2be086-4455-437d-9ee3-ad87af0179bf)
+- [Global timeout override](https://app.buildbuddy.io/invocation/d049bf35-082b-44b4-91b4-f4bfa077b7a4)
+
+No product finding was identified. Longer runs, eviction/GC workloads and full
+app/proxy volume accounting remain follow-ups. A harness helper exposing fixture
+volume usage without requiring utilities inside the image would improve coverage.
