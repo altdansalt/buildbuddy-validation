@@ -63,3 +63,43 @@ The [v2.314.0 API documentation](https://github.com/buildbuddy-io/buildbuddy/blo
 Commands used `GIT_CONFIG_GLOBAL=/dev/null bb remote test <targets> --config=nobug --test_tag_filters= --nocache_test_results --test_output=all`, with the public GitHub runner fetch remote. [Verification run 1](https://app.buildbuddy.io/invocation/da3cc187-af79-4677-b31a-3178d9806cdc) ran `//tests/app/invocations-api:log_pagination_bug_test` and the regression target; [verification run 2](https://app.buildbuddy.io/invocation/e8912f5e-f334-487b-b251-dfbdd5bc9f27) ran the bug target alone. Both failed at the intended missing-length assertion. An earlier attempted repeat [did not run a test](https://app.buildbuddy.io/invocation/fc66f81c-f942-474e-94e5-65cd600db7b0): a reviewer checkout race captured the BES branch and caused a missing-package build error. It is excluded from the two reproductions.
 
 Medium severity is appropriate because conforming authenticated API consumers silently miss most of a multi-chunk log, impairing build diagnosis. The bytes remain stored; the internal `0000` workaround limits impact, and this is not an authorization bypass or permanent storage loss. No test or shared-harness changes are needed.
+
+## Version history
+
+Tested on 2026-10-13 against five released linux/amd64 app images, spanning
+2026-04-16 through 2026-10-08. The unchanged bug-tagged target
+`//tests/app/invocations-api:log_pagination_bug_test` from PR branch
+`area/app-invocations-api` at `2b9f8d922e9e3cf108a2c9bf2d94b1f5829cc30b` ran once per release
+with fresh fixture-local containers and test-result caching disabled.
+
+| Enterprise release | Release date | GCR manifest digest | Result | BuildBuddy invocation |
+| --- | --- | --- | --- | --- |
+| 2.314.0 | 2026-10-08 | `sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/0d0e0ff0-6eea-427a-86aa-264fc25c49e8) ([runner](https://app.buildbuddy.io/invocation/d00aeec8-dfdc-4e10-976f-79070cfb34f1)) |
+| 2.313.0 | 2026-10-06 | `sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/50d7b227-e3a1-4b6f-a641-ccc8f54c4d74) ([runner](https://app.buildbuddy.io/invocation/b3bfccd8-8bb8-431c-8180-271cc423fff5)) |
+| 2.300.0 | 2026-09-01 | `sha256:03bd9ccb5888936beb301a577bf01560511cded6fa909079cbb53277aa32ed68` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/86004e50-afc5-4ee9-be1d-14fc413818e8) ([runner](https://app.buildbuddy.io/invocation/019f3321-eafe-4cf4-8f60-6000a631ab70)) |
+| 2.280.0 | 2026-06-23 | `sha256:d9fbae912f786a0f95d351ffb7c580a6ecb8b1fb636fd3fe8899bf1cb8350a35` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/c32b1b66-8202-4efc-95a7-e806162038e7) ([runner](https://app.buildbuddy.io/invocation/cc70958a-dd13-4172-b239-804dc44652de)) |
+| 2.260.0 | 2026-04-16 | `sha256:0f6376865cc9c92d0e837aa1cb53717b59875db68a1b09b6dd479c571f6ab88e` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/933706c1-fa37-4881-9e70-b23ddacadfe2) ([runner](https://app.buildbuddy.io/invocation/bb610748-3587-4fc7-8c33-347fd4269912)) |
+
+All image references use
+`gcr.io/flame-public/buildbuddy-app-enterprise@<digest>`; digests were resolved
+from the GCR manifest API for the corresponding `enterprise-v<version>` tags.
+The 2.314.0 digest matches the repository default.
+
+Observed on every tested version: All runs return 270,217 of 2,250,021 uploaded bytes, omit FIRST-LINE and retain LAST-LINE. The explicit first-token and multi-chunk controls complete before the intended byte-count assertion fails.
+
+**Earliest tested release reproducing: 2.260.0 (2026-04-16).**
+The defect was present by that release; the introduction version is unknown.
+All sampled releases reproduce, so this matrix does not establish an
+introduction interval or imply every intervening release was tested.
+
+No older release required startup configuration changes. All five reached
+the intended product assertion after fixture startup and authentication.
+
+Command pattern (run from the repro branch; substitute the digest above):
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null bb remote --runner_exec_properties=init-dockerd=true test \
+  //tests/app/invocations-api:log_pagination_bug_test \
+  --test_tag_filters=bug --nocache_test_results --test_output=all \
+  --test_arg=-harness.app_image=gcr.io/flame-public/buildbuddy-app-enterprise@<digest>
+```

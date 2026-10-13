@@ -114,3 +114,43 @@ behavior, not fixture readiness, network, auth or scheduling flakiness.
 
 - Run 1: [eabbb5ec](https://app.buildbuddy.io/invocation/eabbb5ec-3b80-426a-b7d7-c6718232e796).
 - Run 2: [e8f5612e](https://app.buildbuddy.io/invocation/e8f5612e-879a-4524-b15b-53be0cb3dec8).
+
+## Version history
+
+Tested on 2026-10-13 against five released linux/amd64 app images, spanning
+2026-04-16 through 2026-10-08. The unchanged bug-tagged target
+`//tests/app/execution-api:missing_command_bug_test` from PR branch
+`area/app-execution-api` at `31f88729e7b119c6eacf079c2d35f6a050433e52` ran once per release
+with fresh fixture-local containers and test-result caching disabled.
+
+| Enterprise release | Release date | GCR manifest digest | Result | BuildBuddy invocation |
+| --- | --- | --- | --- | --- |
+| 2.314.0 | 2026-10-08 | `sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/7429ce79-97c5-46c9-9b63-faade5c0746c) ([runner](https://app.buildbuddy.io/invocation/2acbd1ed-8e0b-457f-847e-6e94af0ce829)) |
+| 2.313.0 | 2026-10-06 | `sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/2c5201b9-77a9-4dfe-a134-50bf637b835f) ([runner](https://app.buildbuddy.io/invocation/73f2b05f-df3c-4a99-b251-ef8d1334f910)) |
+| 2.300.0 | 2026-09-01 | `sha256:03bd9ccb5888936beb301a577bf01560511cded6fa909079cbb53277aa32ed68` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/813b0be9-9c8a-4619-8a9e-346c42d6a35a) ([runner](https://app.buildbuddy.io/invocation/edd8d379-cc69-4622-b60a-5e02bb696d02)) |
+| 2.280.0 | 2026-06-23 | `sha256:d9fbae912f786a0f95d351ffb7c580a6ecb8b1fb636fd3fe8899bf1cb8350a35` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/eea84bcc-77f4-470e-993a-bb1cda5a82b3) ([runner](https://app.buildbuddy.io/invocation/ac1e06c6-6636-4d18-9e70-64e4827ca0b9)) |
+| 2.260.0 | 2026-04-16 | `sha256:0f6376865cc9c92d0e837aa1cb53717b59875db68a1b09b6dd479c571f6ab88e` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/2fd6fa1d-6dda-435c-b0c3-ceaf5eb7e484) ([runner](https://app.buildbuddy.io/invocation/7df57fec-acb9-42e9-85e1-5ad19f882c22)) |
+
+All image references use
+`gcr.io/flame-public/buildbuddy-app-enterprise@<digest>`; digests were resolved
+from the GCR manifest API for the corresponding `enterprise-v<version>` tags.
+The 2.314.0 digest matches the repository default.
+
+Observed on every tested version: After the CAS control confirms only the command is absent, Execute returns FAILED_PRECONDITION naming the already-uploaded action digest instead of the command digest.
+
+**Earliest tested release reproducing: 2.260.0 (2026-04-16).**
+The defect was present by that release; the introduction version is unknown.
+All sampled releases reproduce, so this matrix does not establish an
+introduction interval or imply every intervening release was tested.
+
+No older release required startup configuration changes. All five reached
+the intended product assertion after fixture startup and authentication.
+
+Command pattern (run from the repro branch; substitute the digest above):
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null bb remote --runner_exec_properties=init-dockerd=true test \
+  //tests/app/execution-api:missing_command_bug_test \
+  --test_tag_filters=bug --nocache_test_results --test_output=all \
+  --test_arg=-harness.app_image=gcr.io/flame-public/buildbuddy-app-enterprise@<digest>
+```
