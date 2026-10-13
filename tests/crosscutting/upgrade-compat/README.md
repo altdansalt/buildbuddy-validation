@@ -67,12 +67,12 @@ on 2026-10-12).
 
 `TestSchedulerUpgrade` retains Redis, SQLite, cache, app ports and the current
 executor while upgrading the app from v2.313.0 to v2.314.0. Separate cases
-observe QUEUED (executor stopped) and EXECUTING (shell action held at a file
+observe QUEUED (executor paused) and EXECUTING (shell action held at a file
 gate) before app replacement. They resume `WaitExecution` with the original
 operation name, release the executor/action, and verify successful output.
 No action is resubmitted. This tests process replacement with retained Redis;
 it does not test Redis loss, distributed schedulers or exactly-once execution.
 
 The area-local replacement helper pulls the image before downtime, copies the
-original config, gracefully stops the component and mounts its existing data.
+original config and hostname alias, gracefully stops the component and mounts its existing data.
 Replacement logs and inspect metadata are preserved with fixture artifacts.

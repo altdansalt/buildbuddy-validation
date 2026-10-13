@@ -36,7 +36,7 @@ func replaceComponent(t *testing.T, f *harness.Fixture, component harness.Compon
 	docker("pull", image)
 	docker("stop", "--time", "30", ep.Container)
 	docker("network", "disconnect", f.Network, ep.Container)
-	args := []string{"create", "--name", name, "--network", f.Network, "--network-alias", string(component), "--volumes-from", ep.Container,
+	args := []string{"create", "--name", name, "--network", f.Network, "--network-alias", string(component), "--network-alias", ep.Container, "--volumes-from", ep.Container,
 		"-p", strings.TrimPrefix(ep.HTTP, "http://") + ":8080", "-p", ep.GRPC + ":1985", image, "--config_file=/config.yaml"}
 	docker(args...)
 	t.Cleanup(func() {
@@ -81,8 +81,8 @@ func TestProxyPersistenceUpgrade(t *testing.T) {
 	// Flush Pebble gracefully, then deny cache fallback while retaining the local
 	// app as authenticator. Successful reads must come from the retained volume.
 	replaceComponent(t, f, harness.CacheProxy, harness.PinnedImages[harness.CacheProxy], func(config string) string {
-		require.Contains(t, config, "remote_cache: grpc://app:1985")
-		return strings.Replace(config, "remote_cache: grpc://app:1985", "remote_cache: grpc://127.0.0.1:1", 1)
+		require.Contains(t, config, "remote_cache: "+f.Endpoint(harness.App).InternalGRPC)
+		return strings.Replace(config, "remote_cache: "+f.Endpoint(harness.App).InternalGRPC, "remote_cache: grpc://127.0.0.1:1", 1)
 	})
 	proxy = f.Clients(harness.CacheProxy)
 	for _, i := range rng.Perm(len(payloads)) {
@@ -109,7 +109,12 @@ func TestSchedulerUpgrade(t *testing.T) {
 			docker := fixtureDocker(t, f)
 			executor := f.Endpoint(harness.Executor).Container
 			if phase == "queued" {
-				docker("stop", "--time", "30", executor)
+				docker("pause", executor)
+				t.Cleanup(func() {
+					if docker("inspect", "--format", "{{.State.Paused}}", executor) == "true" {
+						docker("unpause", executor)
+					}
+				})
 			}
 			root, err := c.UploadProto(ctx, "scheduler-upgrade", &repb.Directory{})
 			require.NoError(t, err)
@@ -144,7 +149,7 @@ func TestSchedulerUpgrade(t *testing.T) {
 			t.Logf("upgrading app with %s operation %s", phase, name)
 			replaceComponent(t, f, harness.App, harness.PinnedImages[harness.App], nil)
 			if phase == "queued" {
-				docker("start", executor)
+				docker("unpause", executor)
 			} else {
 				docker("exec", executor, "touch", "/tmp/upgrade-release")
 			}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -196,6 +197,10 @@ func readInvocation(t *testing.T, w *harness.WebSession, group, id string) map[s
 	delete(inv, "updatedAtUsec")
 	if score, ok := inv["scoreCard"].(map[string]any); ok && len(score) == 0 {
 		delete(inv, "scoreCard")
+	}
+	// Capabilities are a set decoded from a bitmask; response order is unstable.
+	if capabilities, ok := inv["createdWithCapabilities"].([]any); ok {
+		sort.Slice(capabilities, func(i, j int) bool { return capabilities[i].(string) < capabilities[j].(string) })
 	}
 	// Compare all remaining metadata and the entire stored event payloads.
 	return result
