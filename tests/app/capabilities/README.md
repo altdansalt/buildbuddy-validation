@@ -32,5 +32,27 @@ Contract/source references:
 - [Proxy capabilities forwarding](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/capabilities_server_proxy/capabilities_server_proxy.go).
 - [Proxy service registration](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/cmd/cache_proxy/cache_proxy.go).
 
-Not covered here: executing actions with each digest function, priority scheduling,
-chunking/split/splice capabilities, and permission-dependent Bazel metadata.
+Round 2 adds real shell actions for every execution digest function (legacy
+fallback included), default and advertised boundary priorities, and rejection of
+priorities immediately outside the advertised range. Output file digests must
+use the requested function. A small single-chunk BLAKE3 implementation is checked
+against independent empty, `abc`, and multi-block vectors; no dependency changes
+are required.
+
+The split/splice property uses seeded random data up to 2 MiB. It uploads separate
+chunks, splices a previously absent blob, checks ByteStream reconstruction, and
+checks the resulting split mapping. Ordinary uploads may legitimately have no
+mapping and return NOT_FOUND. Replay using
+`--test_arg=-capabilities_seed=31402`. Unsupported compressor choices must return
+INVALID_ARGUMENT or UNIMPLEMENTED. Identity and UNKNOWN digest inference are
+protocol defaults, not negative cases.
+
+`unknown_digest_bug_test` isolates acceptance of an unknown digest function by
+FindMissingBlobs. Run explicitly with `--test_tag_filters=bug
+--nocache_test_results`.
+
+This is a bounded capabilities matrix, not exhaustive coverage of every REAPI
+field: scheduling order/fairness, arbitrary node properties, symlink policy,
+permission-dependent Bazel metadata, and nondefault chunking configuration remain
+outside this round. Streaming chunk mapping APIs require API v2.13; this release
+advertises v2.11, so this round exercises its legacy split/splice RPCs.
