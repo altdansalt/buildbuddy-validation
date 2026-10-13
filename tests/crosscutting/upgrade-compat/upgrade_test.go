@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -23,42 +22,6 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
-
-// Previous non-prerelease GitHub release before v2.314.0; linux/amd64
-// digests resolved using the GCR manifest API, never mutable tags.
-const oldApp = "gcr.io/flame-public/buildbuddy-app-enterprise@sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6"
-const oldExecutor = "gcr.io/flame-public/buildbuddy-executor-enterprise@sha256:8f7c2662f5fcd0ab888113f6d36d31cde8b8ea254434a8177cf6996b01155afe"
-
-// Discover only the daemon owning this fixture; the harness may start a private
-// daemon rather than using the runner's default socket.
-func fixtureDocker(t *testing.T, f *harness.Fixture) func(...string) string {
-	t.Helper()
-	sockets, err := filepath.Glob(filepath.Join(os.TempDir(), "bbval-docker-*", "docker.sock"))
-	require.NoError(t, err)
-	hosts := append([]string{""}, sockets...)
-	for _, host := range hosts {
-		prefix := []string{}
-		if host != "" {
-			prefix = []string{"--host", "unix://" + host}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_, err := exec.CommandContext(ctx, "docker", append(prefix, "inspect", f.Endpoint(harness.App).Container)...).CombinedOutput()
-		cancel()
-		if err != nil {
-			continue
-		}
-		return func(args ...string) string {
-			t.Helper()
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			b, err := exec.CommandContext(ctx, "docker", append(prefix, args...)...).CombinedOutput()
-			require.NoError(t, err, "docker %v: %s", args, b)
-			return strings.TrimSpace(string(b))
-		}
-	}
-	t.Fatal("cannot locate fixture's Docker daemon")
-	return nil
-}
 
 func TestStorageUpgrade(t *testing.T) {
 	storageTransition(t, oldApp, harness.PinnedImages[harness.App])
