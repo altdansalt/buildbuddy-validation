@@ -1,6 +1,13 @@
 # Bounded mixed-load soak
 
-Run `GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/crosscutting/soak/... --config=nobug --nocache_test_results --test_output=all`.
+Run `GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/crosscutting/soak/... --config=nobug --test_timeout=900 --nocache_test_results --test_output=all`.
+
+The repository currently forces a 600-second timeout globally. Override it to
+900 seconds to allow the full ten minutes of load plus fixture startup/cleanup.
+The target declares `timeout = "long"`; removing the global override would make
+the ordinary area command sufficient. A prestarted daemon
+(`bb remote --runner_exec_properties=init-dockerd=true test ...`) can avoid
+Docker Hub Redis pull limits when its image is already cached.
 
 The released app, proxy and bare executor run in one private harness fixture.
 Each execution creates a 4 MiB scratch file to exercise workspace cleanup.
