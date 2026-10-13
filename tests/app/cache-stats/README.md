@@ -66,3 +66,8 @@ additional GetActionResult before executing a miss: aggregate AC misses count
 both Bazel and executor requests, while the scorecard counts only Bazel requests.
 The workload model includes this second miss for each remote execution, per
 [released executor source](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/remote_execution/executor/executor.go).
+
+The app also writes an AC-backed ExecuteResponse for each successful remote
+execution, in addition to the ordinary ActionResult. Aggregate AC uploads
+include both writes, per `cacheExecuteResponse` and `cacheActionResult` in the
+[released execution server](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/remote_execution/execution_server/execution_server.go).

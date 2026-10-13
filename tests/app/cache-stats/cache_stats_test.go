@@ -169,7 +169,9 @@ func TestSeededInvocationCacheStats(t *testing.T) {
 				// The released executor's default pre-execution GetActionResult check
 				// adds one AC miss per executed action (executor.go, v2.314.0).
 				require.Equal(t, total-hits+remote, num(stats["actionCacheMisses"]), "seed=%d phase=%d aggregate AC misses", *seed, phase)
-				uploads := total - hits
+				// The app caches both the ActionResult and an AC-backed ExecuteResponse
+				// per successful remote execution (execution_server.go, v2.314.0).
+				uploads := total - hits + remote
 				require.Equal(t, uploads, num(stats["actionCacheUploads"]), "seed=%d phase=%d aggregate AC uploads", *seed, phase)
 				model := scoreModel(t, rows)
 				// Full stats include executor transfers, which the scorecard intentionally
