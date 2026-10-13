@@ -1,8 +1,8 @@
 # Bazel download modes
 
-This suite downloads the SHA256-verified Bazel 8.4.2 standalone Linux client
+This suite downloads the SHA256-verified Bazel 7.6.1, 8.4.2 and 8.5.0 standalone Linux clients
 inside the hosted runner. It builds two chained genrules against only the
-harness-local released app/executor, using bare-runner execution. It never uses
+harness-local released app/executor with the cache proxy in the cache path, using bare-runner execution. It never uses
 the dispatch API key for component requests.
 
 Coverage:
@@ -23,9 +23,10 @@ Coverage:
   serves the repaired result as a cache hit on the next request.
 - An actual eviction test builds with minimal downloads, fills a private 8 MiB
   Pebble cache with incompressible blobs, proves the output bytes return
-  `NOT_FOUND`, and switches the same Bazel output base to all downloads.
+  `NOT_FOUND`, and builds a new local consumer in the same Bazel output base. Both app and proxy
+  caches are churned, and both must return `NOT_FOUND` before the consumer runs.
   The app has zero minimum eviction age and a one-second sampler refresh;
-  these test-only settings make eviction practical without touching other caches.
+  both app and proxy have these test-only settings make eviction practical without touching other caches.
 
 Contracts used:
 
@@ -40,3 +41,8 @@ Run with `GIT_CONFIG_GLOBAL=/dev/null bb remote test
 
 The root `bazel-*` ignore pattern matches this directory name. New files here
 need `git add -f` until the coordinator narrows that pattern to root outputs.
+
+Round 2 adds three simultaneous async-upload clients sharing 12 seeded outputs
+(seed `314159`), followed by a fresh read-only cache client that must hit every
+action and verify every byte. Eviction churn uses replayable seed `20261012`.
+Bazel 7 uses its experimental async flag; Bazel 8 uses the stable flag.

@@ -2,10 +2,10 @@ package downloadmodes_test
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,10 +29,14 @@ func write(t *testing.T, path, contents string) {
 
 // Pin and verify the standalone client; it runs only on the hosted test runner.
 func bazelClient(t *testing.T) string {
+	return bazelVersion(t, "8.4.2")
+}
+
+func bazelVersion(t *testing.T, version string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://releases.bazel.build/8.4.2/release/bazel-8.4.2-linux-x86_64", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://releases.bazel.build/%s/release/bazel-%s-linux-x86_64", version, version), nil)
 	require.NoError(t, err)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -40,7 +44,8 @@ func bazelClient(t *testing.T) string {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
 	require.NoError(t, err)
-	require.Equal(t, "4dc8e99dfa802e252dac176d08201fd15c542ae78c448c8a89974b6f387c282c", fmt.Sprintf("%x", sha256.Sum256(b)))
+	checksums := map[string]string{"7.6.1": "ac6249d1192aea9feaf49dfee2ab50c38cee2454b00cf29bbec985a11795c025", "8.4.2": "4dc8e99dfa802e252dac176d08201fd15c542ae78c448c8a89974b6f387c282c", "8.5.0": "18255229d933b8da10151bdef223a302744296b09af8af1988c93faa1ea3c71f"}
+	require.Equal(t, checksums[version], fmt.Sprintf("%x", sha256.Sum256(b)))
 	path := filepath.Join(t.TempDir(), "bazel")
 	require.NoError(t, os.WriteFile(path, b, 0700))
 	return path
@@ -58,8 +63,14 @@ func clientEnv() []string {
 }
 
 func TestBazelDownloadModes(t *testing.T) {
-	bin := bazelClient(t)
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
+	for _, version := range []string{"7.6.1", "8.4.2", "8.5.0"} {
+		t.Run(version, func(t *testing.T) { testDownloadModes(t, version) })
+	}
+}
+
+func testDownloadModes(t *testing.T, version string) {
+	bin := bazelVersion(t, version)
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor, harness.CacheProxy}})
 	workspace := t.TempDir()
 	write(t, filepath.Join(workspace, "WORKSPACE"), "workspace(name = \"download_modes\")\n")
 	write(t, filepath.Join(workspace, "BUILD"), `genrule(name="intermediate", outs=["intermediate.txt"], cmd="printf 'download-mode-payload\\n' > $@")
@@ -76,7 +87,8 @@ genrule(name="final", srcs=[":intermediate"], outs=["final.txt"], cmd="cat $(loc
 		for _, disk := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/remote-exec=%t/disk=%t", mode, scenario.remote, disk), func(t *testing.T) {
 				base := t.TempDir()
-				args := []string{"--batch", "--output_base=" + base, "--ignore_all_rc_files", "build", "//:final", "--enable_bzlmod=false", "--enable_workspace", "--incompatible_autoload_externally=", "--jobs=2", "--remote_cache=grpc://" + f.Endpoint(harness.App).GRPC, "--remote_header=x-buildbuddy-api-key=" + f.APIKey, "--remote_download_outputs=" + mode, "--remote_cache_async", "--remote_instance_name=" + fmt.Sprintf("%s-%t-%t", mode, scenario.remote, disk), "--remote_timeout=60", "--remote_default_exec_properties=OSFamily=linux", "--remote_default_exec_properties=Arch=amd64", "--remote_default_exec_properties=workload-isolation-type=none"}
+				args := []string{"--batch", "--output_base=" + base, "--ignore_all_rc_files", "build", "//:final", "--enable_bzlmod=false", "--jobs=2", "--remote_cache=grpc://" + f.Endpoint(harness.CacheProxy).GRPC, "--remote_header=x-buildbuddy-api-key=" + f.APIKey, "--remote_download_outputs=" + mode, asyncFlag(version), "--remote_instance_name=" + fmt.Sprintf("%s-%t-%t", mode, scenario.remote, disk), "--remote_timeout=60", "--remote_default_exec_properties=OSFamily=linux", "--remote_default_exec_properties=Arch=amd64", "--remote_default_exec_properties=workload-isolation-type=none"}
+				args = append(args, workspaceFlags(version)...)
 				if scenario.remote {
 					args = append(args, "--remote_executor=grpc://"+f.Endpoint(harness.App).GRPC)
 				}
@@ -230,15 +242,17 @@ func TestExecutionRecoversMissingCachedOutput(t *testing.T) {
 func TestBazelMinimalRecoversAfterEviction(t *testing.T) {
 	bin := bazelClient(t)
 	f := harness.Start(t, harness.Options{
-		Components: []harness.Component{harness.App, harness.Executor},
+		Components: []harness.Component{harness.App, harness.Executor, harness.CacheProxy},
 		Config: map[harness.Component]harness.Config{
-			harness.App: {"cache": harness.Config{"max_size_bytes": int64(8 << 20), "pebble": harness.Config{"min_eviction_age": "0s", "atime_update_threshold": "0s", "sampler_iter_refresh_peroid": "1s", "presence_cache": harness.Config{"max_entries": 0}}}},
+			harness.CacheProxy: {"cache": harness.Config{"max_size_bytes": int64(8 << 20), "pebble": harness.Config{"min_eviction_age": "0s", "atime_update_threshold": "0s", "sampler_iter_refresh_peroid": "1s", "presence_cache": harness.Config{"max_entries": 0}}}},
+			harness.App:        {"cache": harness.Config{"max_size_bytes": int64(8 << 20), "pebble": harness.Config{"min_eviction_age": "0s", "atime_update_threshold": "0s", "sampler_iter_refresh_peroid": "1s", "presence_cache": harness.Config{"max_entries": 0}}}},
 		},
 	})
 	workspace, base := t.TempDir(), t.TempDir()
 	write(t, filepath.Join(workspace, "WORKSPACE"), "workspace(name = \"eviction\")\n")
-	write(t, filepath.Join(workspace, "BUILD"), `genrule(name="out", outs=["out.txt"], cmd="printf 'eviction-payload\\n' > $@")`)
-	args := []string{"--batch", "--output_base=" + base, "--ignore_all_rc_files", "build", "//:out", "--enable_bzlmod=false", "--enable_workspace", "--incompatible_autoload_externally=", "--jobs=2", "--remote_cache=grpc://" + f.Endpoint(harness.App).GRPC, "--remote_executor=grpc://" + f.Endpoint(harness.App).GRPC, "--remote_header=x-buildbuddy-api-key=" + f.APIKey, "--remote_instance_name=eviction", "--remote_timeout=60", "--remote_default_exec_properties=OSFamily=linux", "--remote_default_exec_properties=Arch=amd64", "--remote_default_exec_properties=workload-isolation-type=none"}
+	write(t, filepath.Join(workspace, "BUILD"), `genrule(name="out", outs=["out.txt"], cmd="printf 'eviction-payload\\n' > $@")
+genrule(name="later", srcs=[":out"], outs=["later.txt"], cmd="cat $(location :out) > $@", local=True)`)
+	args := []string{"--batch", "--output_base=" + base, "--ignore_all_rc_files", "build", "//:out", "--enable_bzlmod=false", "--jobs=2", "--remote_cache=grpc://" + f.Endpoint(harness.CacheProxy).GRPC, "--remote_executor=grpc://" + f.Endpoint(harness.App).GRPC, "--remote_header=x-buildbuddy-api-key=" + f.APIKey, "--remote_instance_name=eviction", "--remote_timeout=60", "--remote_default_exec_properties=OSFamily=linux", "--remote_default_exec_properties=Arch=amd64", "--remote_default_exec_properties=workload-isolation-type=none"}
 	run := func(mode string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
@@ -249,12 +263,16 @@ func TestBazelMinimalRecoversAfterEviction(t *testing.T) {
 		require.NoError(t, err, "%s", b)
 		t.Log(string(b))
 	}
+	args = append(args, workspaceFlags("8.4.2")...)
 	run("minimal")
 	localOutput := filepath.Join(base, "execroot", "eviction", "bazel-out", "k8-fastbuild", "bin", "out.txt")
 	_, err := os.Stat(localOutput)
 	require.True(t, os.IsNotExist(err), "minimal build must retain only output metadata")
-	c := f.Clients(harness.App)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	c := f.Clients(harness.CacheProxy)
+	upstream := f.Clients(harness.App)
+	rng := rand.New(rand.NewSource(20261012))
+	t.Log("eviction seed=20261012")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	payload := []byte("eviction-payload\n")
 	digest := harness.Digest(payload)
@@ -267,9 +285,11 @@ func TestBazelMinimalRecoversAfterEviction(t *testing.T) {
 	for round := 0; round < 10; round++ {
 		for i := 0; i < 16; i++ {
 			churn := make([]byte, 1<<20)
-			_, err := rand.Read(churn)
+			_, err := rng.Read(churn)
 			require.NoError(t, err)
 			_, err = c.Upload(ctx, "eviction", churn)
+			require.NoError(t, err)
+			_, err = upstream.Upload(ctx, "eviction", churn)
 			require.NoError(t, err)
 		}
 		select {
@@ -279,14 +299,82 @@ func TestBazelMinimalRecoversAfterEviction(t *testing.T) {
 		}
 		_, err = c.Read(ctx, "eviction", digest)
 		if status.Code(err) == codes.NotFound {
-			evicted = true
-			break
+			_, upstreamErr := upstream.Read(ctx, "eviction", digest)
+			if status.Code(upstreamErr) == codes.NotFound {
+				evicted = true
+				break
+			}
+			require.NoError(t, upstreamErr)
 		}
 		require.NoError(t, err)
 	}
 	require.True(t, evicted, "test setup failed to evict the original output")
-	run("all")
+	args[4] = "//:later"
+	run("minimal")
+	localOutput = filepath.Join(filepath.Dir(localOutput), "later.txt")
 	b, err = os.ReadFile(localOutput)
 	require.NoError(t, err)
 	require.Equal(t, payload, b, "Bazel must regenerate and download output after CAS eviction")
+}
+
+func workspaceFlags(version string) []string {
+	if strings.HasPrefix(version, "7.") {
+		return nil
+	}
+	return []string{"--enable_workspace", "--incompatible_autoload_externally="}
+}
+func asyncFlag(version string) string {
+	if strings.HasPrefix(version, "7.") {
+		return "--experimental_remote_cache_async"
+	}
+	return "--remote_cache_async"
+}
+
+// Independent batch clients race uploads of the same action and CAS blobs.
+// After all upload barriers complete, fresh readers must see every output.
+func TestConcurrentAsyncUploadsThroughProxy(t *testing.T) {
+	bin := bazelClient(t)
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}})
+	workspace := t.TempDir()
+	write(t, filepath.Join(workspace, "WORKSPACE"), "workspace(name=\"async_stress\")\n")
+	rng := rand.New(rand.NewSource(314159))
+	t.Log("async upload seed=314159 clients=3 outputs=12")
+	var build strings.Builder
+	payloads := make([]string, 12)
+	for i := range payloads {
+		payloads[i] = fmt.Sprintf("seeded-%016x-%d", rng.Uint64(), i)
+		fmt.Fprintf(&build, "genrule(name=\"o%d\", outs=[\"o%d.txt\"], cmd=\"printf '%s' > $@\")\n", i, i, payloads[i])
+	}
+	write(t, filepath.Join(workspace, "BUILD"), build.String())
+	run := func(t *testing.T, read bool) {
+		base := t.TempDir()
+		args := []string{"--batch", "--output_base=" + base, "--ignore_all_rc_files", "build", "//...", "--enable_bzlmod=false", "--jobs=2", "--remote_cache=grpc://" + f.Endpoint(harness.CacheProxy).GRPC, "--remote_header=x-buildbuddy-api-key=" + f.APIKey, "--remote_instance_name=concurrent-async", "--remote_cache_async", "--remote_download_outputs=all", "--remote_timeout=60"}
+		args = append(args, workspaceFlags("8.4.2")...)
+		if read {
+			args = append(args, "--remote_upload_local_results=false")
+		} else {
+			args = append(args, "--noremote_accept_cached")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd.Dir, cmd.Env = workspace, clientEnv()
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", out)
+		t.Log(string(out))
+		if read {
+			require.Contains(t, string(out), "12 remote cache hit")
+		}
+		for i, payload := range payloads {
+			b, err := os.ReadFile(filepath.Join(base, "execroot", "async_stress", "bazel-out", "k8-fastbuild", "bin", fmt.Sprintf("o%d.txt", i)))
+			require.NoError(t, err)
+			require.Equal(t, payload, string(b))
+		}
+	}
+	t.Run("writers", func(t *testing.T) {
+		for i := 0; i < 3; i++ {
+			t.Run(fmt.Sprint(i), func(t *testing.T) { t.Parallel(); run(t, false) })
+		}
+	})
+	t.Run("reader", func(t *testing.T) { run(t, true) })
 }
