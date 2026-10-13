@@ -38,8 +38,7 @@ private daemons created by the harness. A future harness restart/volume-sharing
 API could replace this helper. Tests are sequential to keep resource usage low.
 
 Limitations: single-node SQLite/disk/Pebble only; no MySQL/Postgres, distributed
-cache, in-flight scheduler-state migration, downgrade, proxy persistence, or
-multi-release upgrade chain. The version-skew matrix covers the baseline bare
+cache, multi-release upgrade chain. The version-skew matrix covers the baseline bare
 runner, not container or VM isolation providers.
 
 Validation: [green Bazel invocation](https://app.buildbuddy.io/invocation/acca31b8-3a51-4a09-9359-cf5d78fde355)
@@ -49,3 +48,31 @@ All upgrade and skew cases passed; no product findings were identified.
 Invocation comparisons exclude the asynchronously updated DB timestamp and
 normalize an absent versus empty response-enriched scorecard; stored events and
 all remaining returned metadata must match.
+
+## Round 2
+
+`TestStorageDowngrade` runs the same SQLite/API-key, invocation, CAS and AC
+continuity checks from v2.314.0 back to v2.313.0, including a write after
+downgrade. This covers data written by the current release, not merely an
+untouched old volume.
+
+`TestProxyPersistenceUpgrade` warms twelve binary CAS payloads through the
+v2.313.0 proxy and replaces it with v2.314.0 using the same `/data` volume.
+Payload bytes, sizes and read order use replayable seed `2026101202`. The new
+proxy's cache backend points to its own closed loopback port while its
+authenticator still points to the fixture-local app. Every warmed blob must
+remain readable; a never-warmed remote-only blob must fail. The old proxy
+linux/amd64 manifest digest is recorded in `round2_test.go` (resolved from GCR
+on 2026-10-12).
+
+`TestSchedulerUpgrade` retains Redis, SQLite, cache, app ports and the current
+executor while upgrading the app from v2.313.0 to v2.314.0. Separate cases
+observe QUEUED (executor stopped) and EXECUTING (shell action held at a file
+gate) before app replacement. They resume `WaitExecution` with the original
+operation name, release the executor/action, and verify successful output.
+No action is resubmitted. This tests process replacement with retained Redis;
+it does not test Redis loss, distributed schedulers or exactly-once execution.
+
+The area-local replacement helper pulls the image before downtime, copies the
+original config, gracefully stops the component and mounts its existing data.
+Replacement logs and inspect metadata are preserved with fixture artifacts.

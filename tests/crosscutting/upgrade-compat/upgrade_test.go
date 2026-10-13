@@ -60,7 +60,15 @@ func fixtureDocker(t *testing.T, f *harness.Fixture) func(...string) string {
 }
 
 func TestStorageUpgrade(t *testing.T) {
-	old := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}, Images: map[harness.Component]string{harness.App: oldApp}})
+	storageTransition(t, oldApp, harness.PinnedImages[harness.App])
+}
+
+func TestStorageDowngrade(t *testing.T) {
+	storageTransition(t, harness.PinnedImages[harness.App], oldApp)
+}
+
+func storageTransition(t *testing.T, from, to string) {
+	old := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}, Images: map[harness.Component]string{harness.App: from}})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	c := old.Clients(harness.App)
@@ -102,7 +110,7 @@ func TestStorageUpgrade(t *testing.T) {
 			break
 		}
 	}
-	upgraded := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}, Images: map[harness.Component]string{harness.App: harness.PinnedImages[harness.App]}, DockerArgs: map[harness.Component][]string{harness.App: {"--mount", "type=volume,source=" + volume + ",target=/data"}}})
+	upgraded := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}, Images: map[harness.Component]string{harness.App: to}, DockerArgs: map[harness.Component][]string{harness.App: {"--mount", "type=volume,source=" + volume + ",target=/data"}}})
 	require.Equal(t, old.GroupID, upgraded.GroupID)
 	// Reuse the pre-upgrade key to test database/API-key continuity too.
 	nc := harness.Dial(t, upgraded.Endpoint(harness.App).GRPC, old.APIKey)
