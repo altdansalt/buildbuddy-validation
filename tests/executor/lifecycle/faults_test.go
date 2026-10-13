@@ -49,6 +49,7 @@ func submitHeld(t *testing.T, f *harness.Fixture, ctx context.Context, id string
 			_, err := c.Read(ctx, "lifecycle-faults", d)
 			require.NoError(t, err, "preflight inputs did not survive graceful restart")
 		}
+		f.WaitExecutionReady()
 	}
 	stream, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: "lifecycle-faults", ActionDigest: action, SkipCacheLookup: true})
 	require.NoError(t, err)
