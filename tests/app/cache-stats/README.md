@@ -61,4 +61,8 @@ Contracts consulted:
 Logical byte totals use the requested digest size, including **action digest**
 sizes for AC requests. Transferred AC bytes describe serialized ActionResults,
 so these two byte fields need not match. Identity-compressed CAS output/probe
-transfers must match their digest sizes.
+transfers must match their digest sizes. The default executor performs an
+additional GetActionResult before executing a miss: aggregate AC misses count
+both Bazel and executor requests, while the scorecard counts only Bazel requests.
+The workload model includes this second miss for each remote execution, per
+[released executor source](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/remote_execution/executor/executor.go).

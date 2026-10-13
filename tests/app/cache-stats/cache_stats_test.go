@@ -166,7 +166,9 @@ func TestSeededInvocationCacheStats(t *testing.T) {
 				stats := obj(inv["cacheStats"])
 				require.NotNil(t, stats)
 				require.Equal(t, hits, num(stats["actionCacheHits"]), "seed=%d phase=%d aggregate AC hits", *seed, phase)
-				require.Equal(t, total-hits, num(stats["actionCacheMisses"]), "seed=%d phase=%d aggregate AC misses", *seed, phase)
+				// The released executor's default pre-execution GetActionResult check
+				// adds one AC miss per executed action (executor.go, v2.314.0).
+				require.Equal(t, total-hits+remote, num(stats["actionCacheMisses"]), "seed=%d phase=%d aggregate AC misses", *seed, phase)
 				uploads := total - hits
 				require.Equal(t, uploads, num(stats["actionCacheUploads"]), "seed=%d phase=%d aggregate AC uploads", *seed, phase)
 				model := scoreModel(t, rows)
