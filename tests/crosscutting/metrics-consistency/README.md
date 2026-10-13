@@ -44,3 +44,35 @@ and the repository-pinned
 Deferred invocation-level cache statistics are not treated as synchronous RPC
 counters. Metric names and selected label schemas are pinned release regression
 contracts, not requirements imposed by the Remote Execution API.
+
+## Round 2
+
+`TestTransfersInvocationsAndRestart` adds replayable compressed and ranged
+ByteStream workloads against both app and proxy. It compares upload counters
+with independently compressed payload sizes and read counters with received
+wire sizes, then decompresses responses or checks the exact requested slice.
+Both compressible and random inputs are included; the existing `-metrics.seed`
+flag controls payloads and range selection.
+
+Three complete BES streams per process epoch exercise success/failure invocation
+counter and duration observation counts. Cache RPC request metadata associates a
+compressed upload, compressed full read, and identity ranged read with each
+invocation. The test polls the fixture-local GetInvocation API for deferred cache
+statistics, checking upload/hit counts, digest bytes, actual transferred bytes,
+and nonnegative throughput computed from the recorded sizes and durations.
+Digest download statistics intentionally count the full digest for each read,
+including a range, matching the pinned release's hit tracker contract.
+
+App, proxy, and executor are restarted inside the test, keeping their containers
+and data volumes. The test finds the Docker daemon owning the exact fixture
+container, refreshes Docker-assigned HTTP/gRPC ports, waits for readiness, and
+reconnects clients. Workload counters must reset, and the full workload is repeated
+in the new process epoch. Monotonicity checks apply within each epoch; metric
+types and label schemas are compared across epochs. Scrapes reject duplicate
+series (including labels in different orders), invalid histogram buckets, and
+negative BuildBuddy counters/throughput. Raw counter subtraction across a restart
+is not a rate oracle; a reset is an expected process boundary.
+
+Scrapes from each epoch and finalized cache statistics are preserved in test
+outputs alongside the fixture's exact image metadata and container logs. All
+components use the digest-pinned enterprise-v2.314.0 fixture defaults.
