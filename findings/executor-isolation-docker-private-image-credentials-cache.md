@@ -169,3 +169,11 @@ The originating PR should withdraw this bug assertion or convert it to coverage
 for the intended same-group authorization cache. A separate documentation cleanup
 could remove the stale credential-sensitive comment and explain the lifetime.
 No shared harness or dependency changes are needed.
+
+## Passing regression coverage
+
+PR #139 converts the original bug reproducer to
+`//tests/executor/isolation-docker:registry_credentials_cache`, included in
+`--config=nobug`. It asserts the accepted same-group cached-image reuse with
+changed credentials, while retaining cold-image and explicit-eviction rejection
+controls. The original report and independent rejection are retained above.

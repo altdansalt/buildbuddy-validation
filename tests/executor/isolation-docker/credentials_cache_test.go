@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestPrivateImageCacheRejectsWrongCredentials(t *testing.T) {
+func TestPrivateImageCacheAuthorizationIgnoresChangedCredentials(t *testing.T) {
 	f := fixture(t)
 	registry, valid := localRegistry(t, f)
 	config := valid["test-registry-config"]
@@ -25,12 +25,13 @@ func TestPrivateImageCacheRejectsWrongCredentials(t *testing.T) {
 	require.Equal(t, "private-workload\n", stdout(t, f, warm))
 	cached := execute(t, f, image, "echo private-workload", "", wrong)
 	t.Logf("wrong credentials while cached: status=%v stdout=%q", cached.GetStatus(), stdout(t, f, cached))
-	// Run the eviction control before the failing assertion, so the invocation
-	// shows the same credentials are rejected by the real registry when cold.
+	// Image authorization is intentionally keyed by group and image, without
+	// registry credentials. The same group can reuse the authorized cached image.
+	success(t, cached)
+	require.Equal(t, "private-workload\n", stdout(t, f, cached))
+	// Eviction forces a registry pull, which must still reject invalid credentials.
 	docker(t, "image", "rm", image)
 	evicted := execute(t, f, image, "echo private-workload", "", wrong)
 	require.NotZero(t, evicted.GetStatus().GetCode(), "wrong credentials must fail after explicit eviction")
 	require.Empty(t, stdout(t, f, evicted))
-	require.NotZero(t, cached.GetStatus().GetCode(), "cached private image must not authorize different registry credentials")
-	require.Empty(t, stdout(t, f, cached))
 }

@@ -93,9 +93,10 @@ Docker socket and planning matching executor workspace mounts would remove the
 need to duplicate private-daemon startup in this area. No dependency changes are
 needed.
 
-The separate bug-tagged `:registry_credentials_cache_bug` target checks wrong
-registry credentials before caching, while cached, and after explicit eviction.
-See [the unverified finding](../../../findings/executor-isolation-docker-private-image-credentials-cache.md).
-Run it with `--test_tag_filters=bug --nocache_test_results`. The same-group
-registry authorization policy requires independent review; no cross-group
-access is claimed.
+The passing `:registry_credentials_cache` target checks the accepted same-group
+image authorization policy: wrong registry credentials fail on a cold image,
+succeed while the image is cached after a valid pull, and fail after eviction.
+Authorization tokens intentionally omit registry credentials. This regression
+coverage runs in the ordinary `--config=nobug` suite. See
+[the rejected finding](../../../findings/executor-isolation-docker-private-image-credentials-cache.md)
+for the independent review and upstream rationale. No cross-group access is claimed.

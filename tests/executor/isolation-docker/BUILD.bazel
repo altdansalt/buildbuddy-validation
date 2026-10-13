@@ -30,11 +30,11 @@ go_test(
 
 
 go_test(
-    name = "registry_credentials_cache_bug",
+    name = "registry_credentials_cache",
     size = "large",
     timeout = "long",
-    srcs = ["helpers_test.go", "registry_helpers_test.go", "credentials_cache_bug_test.go"],
-    tags = ["bug", "local", "requires-network"],
+    srcs = ["helpers_test.go", "registry_helpers_test.go", "credentials_cache_test.go"],
+    tags = ["local", "requires-network"],
     deps = [
         "//harness:go_default_library",
         "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
