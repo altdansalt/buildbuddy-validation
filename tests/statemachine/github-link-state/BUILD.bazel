@@ -1,0 +1,29 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "go_default_test",
+    srcs = ["state_test.go", "mock_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//metadata:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+    ],
+)
+
+go_test(
+    name = "installation_flag_bug_test",
+    srcs = ["state_test.go", "mock_test.go", "bug_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//metadata:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+    ],
+)
