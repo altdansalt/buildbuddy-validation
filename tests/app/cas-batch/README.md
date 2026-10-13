@@ -73,3 +73,14 @@ The malformed-zstd finding is a duplicate of the confirmed
 `findings/app-compression-corrupt-batch-status.md` on main: same payload, pinned
 image, decoder error and status classification. Its finding now records that
 relationship; no new defect is claimed.
+
+Round 3 validation on 2026-10-13:
+
+- [Passing full nobug suite](https://app.buildbuddy.io/invocation/d9d3b12b-f546-4c72-8840-5d3bdf2c3d71)
+  from `GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/cas-batch/...
+  --config=nobug --test_arg=-test.v`: 1/1 test targets passed, executed uncached.
+- [Remote runner invocation](https://app.buildbuddy.io/invocation/491fa579-c95b-4372-ba48-7304d2912c5b).
+
+No new suspicious behavior was observed. The existing malformed-zstd duplicate
+already has two uncached minimal reproduction links in its finding; round 3
+compares those observations with the independently confirmed compression report.
