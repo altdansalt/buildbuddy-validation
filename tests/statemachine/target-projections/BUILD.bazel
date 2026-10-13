@@ -1,5 +1,19 @@
 load("@rules_go//go:def.bzl", "go_test")
 
+DEPS = [
+    "//harness:go_default_library",
+    "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+    "@com_github_google_uuid//:go_default_library",
+    "@com_github_stretchr_testify//require:go_default_library",
+    "@org_golang_google_genproto//googleapis/devtools/build/v1:go_default_library",
+    "@org_golang_google_grpc//:go_default_library",
+    "@org_golang_google_grpc//codes:go_default_library",
+    "@org_golang_google_grpc//status:go_default_library",
+    "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+    "@org_golang_google_protobuf//types/known/anypb:go_default_library",
+    "@org_golang_google_protobuf//types/known/timestamppb:go_default_library",
+]
+
 go_test(
     name = "go_default_test",
     size = "large",
@@ -7,40 +21,27 @@ go_test(
     srcs = [
         "cache_sequence_test.go",
         "cli_test.go",
- "live_test.go",
- "surfaces_test.go",
+        "common_test.go",
         "helpers_test.go",
+        "live_test.go",
         "projections_test.go",
+        "sequence_test.go",
+        "surfaces_test.go",
     ],
     tags = ["local", "requires-network"],
-    deps = [
-        "//harness:go_default_library",
-        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
-        "@com_github_google_uuid//:go_default_library",
-        "@com_github_stretchr_testify//require:go_default_library",
-        "@org_golang_google_genproto//googleapis/devtools/build/v1:go_default_library",
-        "@org_golang_google_grpc//:go_default_library",
-        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
-        "@org_golang_google_protobuf//types/known/anypb:go_default_library",
-        "@org_golang_google_protobuf//types/known/timestamppb:go_default_library",
-    ],
+    deps = DEPS,
 )
 
+# Known divergence; excluded from the default suite (see FINDING-*.md).
 go_test(
- name = "delete_repro",
- size = "large",
- timeout = "long",
- srcs = ["delete_test.go"],
- tags = ["bug", "local", "requires-network"],
- deps = [
- "//harness:go_default_library",
- "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
- "@com_github_google_uuid//:go_default_library",
- "@com_github_stretchr_testify//require:go_default_library",
- "@org_golang_google_genproto//googleapis/devtools/build/v1:go_default_library",
- "@org_golang_google_grpc//:go_default_library",
- "@org_golang_google_protobuf//encoding/protowire:go_default_library",
- "@org_golang_google_protobuf//types/known/anypb:go_default_library",
- "@org_golang_google_protobuf//types/known/timestamppb:go_default_library",
- ],
+    name = "delete_repro",
+    size = "large",
+    timeout = "long",
+    srcs = [
+        "delete_test.go",
+        "common_test.go",
+        "helpers_test.go",
+    ],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
 )

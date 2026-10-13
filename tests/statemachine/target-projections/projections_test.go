@@ -18,15 +18,6 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
-// This codec transports the released schema directly, without building the app.
-type wireCodec struct{}
-
-func (wireCodec) Name() string                  { return "proto" }
-func (wireCodec) Marshal(v any) ([]byte, error) { return *v.(*[]byte), nil }
-func (wireCodec) Unmarshal(b []byte, v any) error {
-	*v.(*[]byte) = append([]byte(nil), b...)
-	return nil
-}
 func readRPC(t *testing.T, f *harness.Fixture, path string, req []byte) []byte {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
