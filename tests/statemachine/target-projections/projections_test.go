@@ -70,6 +70,8 @@ type targetModel struct {
 }
 type buildModel struct {
 	id      string
+	step    int
+	now     int64
 	targets []targetModel
 	events  [][]byte
 }
@@ -77,7 +79,7 @@ type buildModel struct {
 func build(t *testing.T, f *harness.Fixture, step int) buildModel {
 	id := uuid.NewString()
 	now := time.Now().UnixMilli()
-	m := buildModel{id: id, targets: []targetModel{{"//pkg:alpha", "PASSED", 1, 1, 5}, {"//pkg:beta", "FLAKY", 2, 2, 11}}}
+	m := buildModel{id: id, step: step, now: now, targets: []targetModel{{"//pkg:alpha", "PASSED", 1, 1, 5}, {"//pkg:beta", "FLAKY", 2, 2, 11}}}
 	if step == 1 {
 		m.targets[0] = targetModel{"//pkg:alpha", "FAILED", 1, 4, 6}
 		m.targets[1] = targetModel{"//pkg:beta", "PASSED", 1, 1, 5}
@@ -98,7 +100,7 @@ func build(t *testing.T, f *harness.Fixture, step int) buildModel {
 		for attempt := 1; attempt <= x.attempts; attempt++ {
 			content := artifactContent(id, x.label, attempt, x.testStatus == 4 || (x.attempts > 1 && attempt < x.attempts))
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			d, err := f.Clients(harness.App).Upload(ctx, "", content)
+			d, err := f.Clients([]harness.Component{harness.App, harness.CacheProxy}[attempt%2]).Upload(ctx, "", content)
 			cancel()
 			require.NoError(t, err)
 			uri := "bytestream://" + strings.TrimPrefix(f.Endpoint(harness.App).InternalGRPC, "grpc://") + "/" + harness.ResourceName("", d, false)
@@ -114,7 +116,15 @@ func build(t *testing.T, f *harness.Fixture, step int) buildModel {
 		}
 		m.events = append(m.events, event(7, 9, msg(str(1, x.label), field(2, str(1, "cfg"))), msg(num(5, x.testStatus), num(1, int64(x.attempts)), num(10, 1), num(11, 1), num(15, int64(x.attempts)), num(7, now), num(8, now+10*int64(x.attempts)), num(9, 10*int64(x.attempts)))))
 	}
+	m.events = append(m.events, event(2, 3, num(1, 0), str(1, "log/"+id+"\n")))
 	m.events = append(m.events, event(14, 16, nil, field(1, msg(str(1, "BUILD_USER"), str(2, "fixture-user")))))
+	bctx, bcancel := context.WithTimeout(context.Background(), 30*time.Second)
+	bd, err := f.Clients(harness.CacheProxy).Upload(bctx, "", bundleContent(id))
+	bcancel()
+	require.NoError(t, err)
+	bundleURI := "bytestream://" + strings.TrimPrefix(f.Endpoint(harness.App).InternalGRPC, "grpc://") + "/" + harness.ResourceName("", bd, false)
+	m.events = append(m.events, event(13, 15, str(1, "set-"+id), field(1, msg(str(1, "bundle.txt"), str(2, bundleURI), str(5, bd.Hash), num(6, bd.SizeBytes)))))
+	m.events = append(m.events, event(20, 23, nil, field(1, msg(str(1, "report.txt"), field(3, []byte("report/"+id))))))
 	exit := int64(0)
 	name := "SUCCESS"
 	if step == 1 {
@@ -129,6 +139,8 @@ func build(t *testing.T, f *harness.Fixture, step int) buildModel {
 }
 func check(t *testing.T, f *harness.Fixture, m buildModel, binary, dir string) {
 	t.Helper()
+	checkAdditional(t, f, m)
+	checkLogsAndArtifacts(t, f, m, binary, dir)
 	inv := rpc(t, f, "GetInvocation", map[string]any{"lookup": map[string]any{"invocationId": m.id}})
 	invocation := objects(t, inv, "invocation")[0].(map[string]any)
 	require.Equal(t, m.id, invocation["invocationId"])
@@ -285,11 +297,13 @@ func TestSuccessiveBuildProjections(t *testing.T) {
 			check(t, f, old, binary, dir)
 		}
 		checkHistory(t, f, model)
+		checkSearch(t, f, model)
 		publish(t, f, m.id, m.events) // A valid retry must leave projections unchanged.
 		for _, old := range model {
 			check(t, f, old, binary, dir)
 		}
 		checkHistory(t, f, model)
+		checkSearch(t, f, model)
 	}
 }
 
@@ -328,6 +342,7 @@ func checkHistory(t *testing.T, f *harness.Fixture, model []buildModel) {
 	for _, h := range values(out, 2) {
 		require.Len(t, values(h, 3), len(model))
 		label := string(values(values(h, 1)[0], 2)[0])
+		require.Contains(t, expected, label)
 		statuses := map[string]uint64{}
 		for _, v := range values(h, 3) {
 			id := string(values(v, 1)[0])
@@ -344,6 +359,8 @@ func checkHistory(t *testing.T, f *harness.Fixture, model []buildModel) {
 
 	}
 }
+
+func bundleContent(id string) []byte { return []byte("bundle/" + id) }
 
 func artifactContent(id, label string, attempt int, failed bool) []byte {
 	outcome := ""
