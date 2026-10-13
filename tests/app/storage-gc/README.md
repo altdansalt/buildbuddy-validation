@@ -33,3 +33,28 @@ It does not simulate host power loss or verify the 15-minute stale-file janitor.
 The fixture has no lifecycle API; the area helper locates the daemon by inspecting
 only its unique app name, then kills/restarts that container. A harness-provided
 Docker command or restart method would remove this workaround.
+
+## Round 2 coverage
+
+- Startup cleanup: after SIGKILL, seed an aged nonempty fallback `.tmp` file and
+  an aged zero-length file alongside a real committed CAS blob. Startup must
+  remove both while preserving the committed blob and a recent temporary file.
+  An isolated Alpine helper mounts only the fixture app's volume. Aging mtime
+  avoids waiting 15 minutes; this tests startup scanning, not a periodic sweep
+  or host power loss. The existing test exercises a real interrupted stream.
+- ActionCache: twelve 64 KiB inline-stdout results overflow the 256 KiB budget.
+  Evicted actions return NOT_FOUND; surviving actions return their exact exit
+  code and stdout. Updating an evicted key restores the replacement result.
+- Seeded integrity: 200 random operations per layout alternate uploads,
+  ByteStream reads, BatchReadBlobs and eight-blob eviction-pressure bursts.
+  Successful reads must equal the original random payload; NOT_FOUND is allowed.
+  The seed and operation trace appear in test logs. Replay or explore a seed:
+
+  ```sh
+  GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/storage-gc/... --config=nobug \
+    --test_filter=TestSeededIntegrityUnderEviction --test_arg=-storage_gc_seed=314002 \
+    --nocache_test_results --test_output=all
+  ```
+
+Both legacy and v2 layouts use the harness's pinned released app image. No
+component calls address a shared deployment.
