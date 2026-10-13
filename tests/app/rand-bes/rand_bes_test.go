@@ -48,10 +48,11 @@ func ev(id []byte, field protowire.Number, payload []byte) event {
 }
 
 type target struct {
-	label   string
-	results []map[string]any
-	status  string
-	runs    int
+	label                   string
+	results                 []map[string]any
+	status                  string
+	runs                    int
+	shards, attempts, total int
 }
 type model struct {
 	events  []event
@@ -75,27 +76,49 @@ func generate(r *rand.Rand, iid string, boundary bool) model {
 		if r.Intn(3) == 0 && !boundary {
 			status = 4
 			statusName = "FAILED"
+		}
+		shards := 1 + r.Intn(4)
+		attempts := 1
+		if !boundary && i%3 == 0 {
+			status, statusName = 2, "FLAKY"
+			attempts = 2 + r.Intn(3)
+		}
+		if status == 4 {
 			m.success = false
 		}
-		t := target{label: label, status: statusName, runs: runs}
+		t := target{label: label, status: statusName, runs: runs, shards: shards, attempts: attempts, total: runs * shards * attempts}
 		m.events = append(m.events, ev(msg(16, str(1, label)), 18, join(str(1, "go_test rule"), num(2, 1))))
 		m.events = append(m.events, ev(msg(5, join(str(1, label), msg(3, str(1, "cfg")))), 8, num(1, 1)))
 		for run := 1; run <= runs; run++ {
-			details := fmt.Sprintf("seeded-%d-%d-λ", i, r.Intn(100000))
-			cached := r.Intn(2) == 0
-			id := msg(8, join(str(1, label), num(2, run), num(4, 1), msg(5, str(1, "cfg"))))
-			payload := join(num(5, status), str(9, details))
-			if cached {
-				payload = join(payload, num(4, 1))
+			for shard := 0; shard < shards; shard++ {
+				for attempt := 1; attempt <= attempts; attempt++ {
+					resultStatus, resultName := status, statusName
+					if status == 2 {
+						resultStatus, resultName = 4, "FAILED"
+						if attempt == attempts {
+							resultStatus, resultName = 1, "PASSED"
+						}
+					}
+					details := fmt.Sprintf("seeded-%d-%d-λ", i, r.Intn(100000))
+					cached := r.Intn(2) == 0
+					id := msg(8, join(str(1, label), num(2, run), num(3, shard), num(4, attempt), msg(5, str(1, "cfg"))))
+					payload := join(num(5, resultStatus), str(9, details))
+					if cached {
+						payload = join(payload, num(4, 1))
+					}
+					m.events = append(m.events, ev(id, 10, payload))
+					result := map[string]any{"status": resultName, "statusDetails": details}
+					if cached {
+						result["cachedLocally"] = true
+					}
+					t.results = append(t.results, map[string]any{"id": map[string]any{"testResult": map[string]any{"label": label, "run": float64(run), "attempt": float64(attempt), "configuration": map[string]any{"id": "cfg"}}}, "testResult": result})
+					if shard > 0 {
+						object(object(t.results[len(t.results)-1]["id"])["testResult"])["shard"] = float64(shard)
+					}
+				}
 			}
-			m.events = append(m.events, ev(id, 10, payload))
-			result := map[string]any{"status": statusName, "statusDetails": details}
-			if cached {
-				result["cachedLocally"] = true
-			}
-			t.results = append(t.results, map[string]any{"id": map[string]any{"testResult": map[string]any{"label": label, "run": float64(run), "attempt": float64(1), "configuration": map[string]any{"id": "cfg"}}}, "testResult": result})
 		}
-		m.events = append(m.events, ev(msg(7, join(str(1, label), msg(2, str(1, "cfg")))), 9, join(num(5, status), num(1, runs), num(10, runs), num(11, 1), num(15, 1))))
+		m.events = append(m.events, ev(msg(7, join(str(1, label), msg(2, str(1, "cfg")))), 9, join(num(5, status), num(1, t.total), num(10, runs), num(11, shards), num(15, attempts))))
 		m.targets = append(m.targets, t)
 	}
 	// Plain short lines avoid terminal escape processing and line wrapping. Split
@@ -194,6 +217,49 @@ func publish(t *testing.T, c *harness.Clients, iid string, m model) {
 	}
 }
 
+// Interrupt before BuildFinished, then wait for finalization before retrying the
+// entire stream from sequence 1, as Bazel does for an unacknowledged stream.
+func interrupt(t *testing.T, f *harness.Fixture, c *harness.Clients, iid string, m model, cut int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	s, err := c.BES.PublishBuildToolEventStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		for {
+			_, err := s.Recv()
+			if err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	for i, e := range m.events[:cut] {
+		if err := s.Send(&bes.PublishBuildToolEventStreamRequest{OrderedBuildEvent: &bes.OrderedBuildEvent{StreamId: &bes.StreamId{BuildId: iid, InvocationId: iid, Component: bes.StreamId_TOOL}, SequenceNumber: int64(i + 1), Event: &bes.BuildEvent{EventTime: timestamppb.New(time.Unix(1700000000, int64(i))), Event: &bes.BuildEvent_BazelEvent{BazelEvent: &anypb.Any{TypeUrl: "type.googleapis.com/build_event_stream.BuildEvent", Value: e.wire}}}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.CloseSend(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("interrupted at event %d: stream ended with %v", cut, <-done)
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		res := rpc(t, f, "GetInvocation", map[string]any{"lookup": map[string]any{"invocationId": iid}})
+		invs := array(res["invocation"])
+		if len(invs) == 1 && object(invs[0])["invocationStatus"] == "DISCONNECTED_INVOCATION_STATUS" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("interrupted invocation did not disconnect: %v", res)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func rpc(t *testing.T, f *harness.Fixture, method string, req map[string]any) map[string]any {
 	t.Helper()
 	req["requestContext"] = f.Web.RequestContext(f.GroupID)
@@ -253,7 +319,7 @@ func check(t *testing.T, f *harness.Fixture, iid string, m model) map[string]any
 
 	// Listing pages expose metadata, while single-target lookups expose details.
 	// Verify no missing or extra labels, and total_count consistency on every page.
-	for _, status := range []string{"PASSED", "FAILED"} {
+	for _, status := range []string{"PASSED", "FAILED", "FLAKY"} {
 		expected := map[string]bool{}
 		for _, target := range m.targets {
 			if target.status == status {
@@ -271,10 +337,13 @@ func check(t *testing.T, f *harness.Fixture, iid string, m model) map[string]any
 			}
 			g := object(groups[0])
 			count := fmt.Sprint(g["totalCount"])
-			if len(expected) > 0 && count != fmt.Sprint(len(expected)) {
+			if count != fmt.Sprint(len(expected)) && !(len(expected) == 0 && g["totalCount"] == nil) {
 				t.Fatalf("%s totalCount %s want %d", status, count, len(expected))
 			}
 			for _, v := range array(g["targets"]) {
+				if object(v)["status"] != status || g["status"] != status {
+					t.Fatalf("listing status disagrees: %v", g)
+				}
 				label, _ := object(object(v)["metadata"])["label"].(string)
 				if !expected[label] || seen[label] {
 					t.Fatalf("unexpected/duplicate listed target %q for %s", label, status)
@@ -328,7 +397,7 @@ func check(t *testing.T, f *harness.Fixture, iid string, m model) map[string]any
 			}
 		}
 		summary := object(got["testSummary"])
-		if summary["overallStatus"] != want.status || summary["totalRunCount"] != float64(want.runs) {
+		if summary["overallStatus"] != want.status || summary["totalRunCount"] != float64(want.total) || summary["runCount"] != float64(want.runs) || summary["shardCount"] != float64(want.shards) || summary["attemptCount"] != float64(want.attempts) || got["status"] != want.status {
 			t.Fatalf("summary %v", summary)
 		}
 		snapshot[want.label] = got
@@ -394,6 +463,9 @@ func TestRandomizedBESRoundTripAndReplay(t *testing.T) {
 		m := generate(r, iid, i == 0)
 		if !t.Run(fmt.Sprintf("seed_%d/iteration_%d", *seed, i), func(t *testing.T) {
 			t.Logf("seed=%d iteration=%d invocation=%s events=%d", *seed, i, iid, len(m.events))
+			if i%2 == 0 {
+				interrupt(t, f, c, iid, m, 2+r.Intn(len(m.events)-3))
+			}
 			publish(t, c, iid, m)
 			before := check(t, f, iid, m)
 			publish(t, c, iid, m)

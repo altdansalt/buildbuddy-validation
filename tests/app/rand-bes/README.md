@@ -42,3 +42,20 @@ build or a new dependency. Contract references:
 
 No shared deployment is addressed by component requests. The outer dispatch
 credential is never read or forwarded by these tests.
+
+Round 2 adds 1–4 shards per target and flaky targets with 2–4 attempts for each
+run/shard pair. Flaky histories contain failed attempts followed by a passing
+attempt; their aggregate summary and target status must remain `FLAKY`.
+Every result ID (including run, zero-based shard and attempt), payload and summary
+count is checked against the generated stream. Status-filtered pages and detailed
+target responses must agree with the same oracle for `PASSED`, `FAILED` and
+`FLAKY`, including empty groups.
+
+Even-numbered iterations close a seeded prefix of the stream before its finish
+event, wait for the invocation to become disconnected, and reconnect by replaying
+from sequence 1. Complete results and console logs must contain exactly the final
+stream's data; the existing finalized-stream replay checks still apply. Prefix
+lengths use the same seed, and are printed in test output. This models an orderly
+transport interruption without a component-stream-finished envelope, rather than
+injecting a network partition or asserting unsupported continuation at a sequence
+number greater than 1.
