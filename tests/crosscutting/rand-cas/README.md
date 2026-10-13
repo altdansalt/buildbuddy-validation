@@ -32,11 +32,29 @@ Protocol references:
 - [Released ByteStream server](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/server/remote_cache/byte_stream_server/byte_stream_server.go).
 - [BLAKE3 specification](https://github.com/BLAKE3-team/BLAKE3-specs/blob/master/blake3.pdf) and [official test vectors](https://github.com/BLAKE3-team/BLAKE3/blob/master/test_vectors/test_vectors.json). The small scalar oracle is checked against every published vector's first 32 hash bytes, including multi-chunk trees.
 
-This area does not require shared harness or module changes. Concurrent clients,
-resumable uploads, malformed requests and unsupported compressor status checks
-are follow-up coverage; the property test concentrates on valid input round trips.
+This area does not require shared harness or module changes. Malformed requests and unsupported compressor status checks remain follow-up
+coverage. Round 2 adds eight concurrent workers performing 320 seeded operations
+on four shared SHA256 digests through both endpoints: duplicate streaming and
+batch writes, range reads and presence checks. Prepopulated immutable content
+provides a deterministic oracle during concurrent rewrites, followed by full
+readback through both endpoints. Worker schedules are seed-replayable; actual
+thread interleaving depends on the runner.
+
+Interrupted-upload coverage uses eight fresh random blobs per endpoint, each
+half-closed three times at seeded random positions without finish_write. It
+drains each RPC before querying committed progress and finishes with random
+chunk boundaries, then verifies bytes through both endpoints. UNIMPLEMENTED or
+NOT_FOUND upload status causes a restart at offset zero; an acknowledged offset
+is used to resume completion. The pinned app release explicitly does not
+implement QueryWriteStatus, so this covers restart correctness rather than
+claiming persistent partial-upload support.
 
 `compressed_read_limit_bug_test` is a separate deterministic two-byte reproducer
 for accepting forbidden nonzero compressed read limits. It is tagged `bug` and
 excluded by `--config=nobug`; see
 [the finding](../../../../findings/crosscutting-rand-cas-compressed-read-limit.md).
+
+`unfinished_write_bug_test` isolates a missing WriteResponse after half-closing
+an incomplete upload. The recovery property logs this interrupted-stream error
+and continues querying/retrying; the separate bug target asserts the response
+contract. See [the finding](../../../../findings/crosscutting-rand-cas-unfinished-write-response.md).

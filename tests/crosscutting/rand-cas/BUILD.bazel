@@ -4,7 +4,7 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["cas_test.go", "blake3_test.go"],
+    srcs = ["cas_test.go", "blake3_test.go", "concurrent_test.go"],
     tags = ["local", "requires-network"],
     deps = [
         "//harness:go_default_library",
@@ -26,5 +26,17 @@ go_test(
         "@org_golang_google_genproto_googleapis_bytestream//:go_default_library",
         "@org_golang_google_grpc//codes:go_default_library",
         "@org_golang_google_grpc//status:go_default_library",
+    ],
+)
+
+go_test(
+    name = "unfinished_write_bug_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["unfinished_write_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@org_golang_google_genproto_googleapis_bytestream//:go_default_library",
     ],
 )
