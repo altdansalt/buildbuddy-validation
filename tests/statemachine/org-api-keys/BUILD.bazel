@@ -1,0 +1,33 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+_DEPS = [
+    "//harness:go_default_library",
+    "@org_golang_google_grpc//:go_default_library",
+    "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+]
+
+# Control: the deprecated visible_to_developers bool is honored.
+go_test(
+    name = "visibility_control",
+    size = "large",
+    timeout = "long",
+    srcs = ["visibility_test.go"],
+    args = ["-test.run=TestVisibilityDeprecatedBool"],
+    tags = ["local", "requires-network"],
+    deps = _DEPS,
+)
+
+# Known divergence: the repeated visibility field is ignored on create.
+go_test(
+    name = "modern_visibility_repro",
+    size = "large",
+    timeout = "long",
+    srcs = ["visibility_test.go"],
+    args = ["-test.run=TestVisibilityRepeatedField"],
+    tags = [
+        "bug",
+        "local",
+        "requires-network",
+    ],
+    deps = _DEPS,
+)
