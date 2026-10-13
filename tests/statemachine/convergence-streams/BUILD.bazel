@@ -1,7 +1,7 @@
 load("@rules_go//go:def.bzl", "go_test")
 go_test(
     name = "go_default_test",
-    srcs = ["streams_test.go"],
+    srcs = ["streams_test.go", "convergence_test.go", "tree_test.go"],
     size = "large",
     timeout = "long",
     tags = ["local", "requires-network"],
@@ -10,6 +10,53 @@ go_test(
         "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
         "@org_golang_google_genproto_googleapis_bytestream//:go_default_library",
         "@org_golang_google_grpc//:go_default_library",
+ "@org_golang_google_grpc//codes:go_default_library",
+ "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+ "@org_golang_google_protobuf//encoding/protojson:go_default_library",
+        "@org_golang_google_protobuf//types/known/emptypb:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_protobuf//types/known/wrapperspb:go_default_library",
+    ],
+)
+
+go_test(
+    name = "compressed_range_bug",
+    srcs = ["streams_test.go", "range_bug_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+        "@org_golang_google_genproto_googleapis_bytestream//:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+ "@org_golang_google_grpc//codes:go_default_library",
+ "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+ "@org_golang_google_protobuf//encoding/protojson:go_default_library",
+        "@org_golang_google_protobuf//types/known/emptypb:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_protobuf//types/known/wrapperspb:go_default_library",
+    ],
+)
+
+go_test(
+    name = "delete_convergence_bug",
+    srcs = ["streams_test.go", "delete_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+        "@org_golang_google_genproto_googleapis_bytestream//:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+ "@org_golang_google_grpc//codes:go_default_library",
+ "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+ "@org_golang_google_protobuf//encoding/protojson:go_default_library",
+        "@org_golang_google_protobuf//types/known/emptypb:go_default_library",
         "@org_golang_google_protobuf//encoding/protowire:go_default_library",
         "@org_golang_google_protobuf//types/known/wrapperspb:go_default_library",
     ],
