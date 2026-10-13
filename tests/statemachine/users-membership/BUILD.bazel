@@ -1,0 +1,16 @@
+load("@rules_go//go:def.bzl", "go_test")
+go_test(
+    name = "go_default_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["membership_test.go", "oidc_test.go", "wire_test.go"],
+    tags = ["local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_grpc//metadata:go_default_library",
+    ],
+)
