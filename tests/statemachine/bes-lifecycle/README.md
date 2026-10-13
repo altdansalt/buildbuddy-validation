@@ -52,9 +52,18 @@ Invocation summaries, execution trends, quantiles, finer time buckets, target
 trends, heatmaps and drilldown require OLAP/configuration and are not exercised.
 Their absence is not a consistency finding.
 
-This item covers BES publication and lifecycle, not ACL mutation
-(`UpdateInvocation`), execution cancellation, arbitrary target/artifact events,
-or proxy cache state. Deletion checks invocation detail, search, stats, trends and public API projections; stored
-blob garbage collection and CLI/log access after deletion are separate concerns.
-The streamed lifecycle has no edit/delete RPC; DeleteInvocation is an additional
-supported cleanup transition. No shared harness or dependency changes are needed.
+Round 2 adds populated target/action/named-set artifact projections, full raw
+JSON/protobuf and detail event contents, streaming logs and terminal pagination,
+post-delete logs/CLI/commit selectors, live progress updates with two stable
+observations, and same-ID deletion/re-creation with two API keys in the same org.
+See [SURFACES.md](SURFACES.md) for implementation/caller inventory and explicit
+remaining limits. This remains short of EVERY surface after EVERY stream send;
+in particular configured OLAP needs shared sidecar support.
+
+Known divergences: [deleted download error mapping](finding-deleted-download.md)
+and [default live-log tail omission](finding-live-default-tail.md).
+Normal `conformance` is untagged with respect to `bug`. The isolated
+`deleted_download_repro` and `live_tail_repro` targets are tagged `bug` and intentionally fails while
+this error mapping remains. Run it explicitly with `--test_tag_filters=bug
+--nocache_test_results`. No PR is opened for this round; only the assigned branch
+is pushed.

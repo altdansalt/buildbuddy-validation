@@ -2,64 +2,22 @@ package bes_lifecycle_test
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/altdansalt/buildbuddy-validation/harness"
 	"github.com/google/uuid"
-	"github.com/jhump/protoreflect/dynamic"
-	"github.com/jhump/protoreflect/grpcreflect"
 	"github.com/stretchr/testify/require"
 	bes "google.golang.org/genproto/googleapis/devtools/build/v1"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
-
-// Reflection obtains the released server's own schemas, avoiding a source build.
-func grpcRead(t *testing.T, ctx context.Context, c *harness.Clients, service, method string, req map[string]any) (map[string]any, error) {
-	t.Helper()
-	rc := grpcreflect.NewClientAuto(ctx, c.Conn)
-	defer rc.Reset()
-	sd, err := rc.ResolveService(service)
-	if err != nil {
-		return nil, err
-	}
-	md := sd.FindMethodByName(method)
-	if md == nil {
-		return nil, fmt.Errorf("missing method %s", method)
-	}
-	in, out := dynamic.NewMessage(md.GetInputType()), dynamic.NewMessage(md.GetOutputType())
-	b, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	if err = in.UnmarshalJSON(b); err != nil {
-		return nil, err
-	}
-	if err = c.Conn.Invoke(ctx, "/"+service+"/"+method, in, out, grpc.WaitForReady(false)); err != nil {
-		return nil, err
-	}
-	b, err = out.MarshalJSON()
-	if err != nil {
-		return nil, err
-	}
-	var result map[string]any
-	err = json.Unmarshal(b, &result)
-	return result, err
-}
 
 type model struct {
 	id, state string
@@ -71,6 +29,7 @@ func checkModel(t *testing.T, f *harness.Fixture, c *harness.Clients, m model) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	convergenceStart := time.Now()
 	req := map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "lookup": map[string]any{"invocationId": m.id}}
 	// Poll the state rather than assuming Send is a persistence barrier.
 	require.Eventually(t, func() bool {
@@ -125,6 +84,7 @@ func checkModel(t *testing.T, f *harness.Fixture, c *harness.Clients, m model) {
 		}
 		return true
 	}, 20*time.Second, 100*time.Millisecond)
+	t.Logf("%s %s reader convergence observed within %s", m.id, m.state, time.Since(convergenceStart))
 	ownerReq := map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "invocationId": m.id}
 	// This owner lookup is server-admin-only, unlike the org-authorized readers.
 	_, err = f.Web.RPC("GetInvocationOwner", ownerReq)
@@ -138,6 +98,13 @@ func checkModel(t *testing.T, f *harness.Fixture, c *harness.Clients, m model) {
 		inv := a[0].(map[string]any)
 		if name == "rest" || name == "api-grpc" || name == "commit-rest" || name == "commit-grpc" {
 			require.Equal(t, m.id, inv["id"].(map[string]any)["invocationId"], name)
+			metadata := map[string]string{}
+			for _, item := range objects(t, inv, "buildMetadata") {
+				v := item.(map[string]any)
+				metadata[v["key"].(string)] = v["value"].(string)
+			}
+			require.Equal(t, map[string]string{"ROLE": "CI", "REPO_URL": "https://example.invalid/bes-lifecycle", "COMMIT_SHA": "0123456789abcdef", "BRANCH_NAME": "validation"}, metadata, name+":metadata")
+			require.Equal(t, []any{map[string]any{"key": "BUILD_USER", "value": "fixture-user"}, map[string]any{"key": "BUILD_HOST", "value": "fixture-host"}}, inv["workspaceStatus"], name+":workspace")
 		} else {
 			require.Equal(t, m.id, inv["invocationId"], name)
 		}
@@ -199,6 +166,7 @@ func runLifecycle(t *testing.T, success bool) {
 	for i := 0; i < 2; i++ {
 		_, err := c.BES.PublishLifecycleEvent(ctx, lifecycle)
 		require.NoError(t, err)
+		checkAbsent(t, f, c, id)
 	}
 	_, err := f.Web.RPC("GetInvocation", map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "lookup": map[string]any{"invocationId": id}})
 	require.ErrorContains(t, err, "NotFound")
@@ -209,30 +177,19 @@ func runLifecycle(t *testing.T, success bool) {
 	_, err = grpcRead(t, ctx, c, "google.devtools.build.v1.PublishBuildEvent", "PublishLifecycleEvent", startedLife)
 	require.NoError(t, err)
 
+	checkAbsent(t, f, c, id)
 	s, err := c.BES.PublishBuildToolEventStream(ctx)
 	require.NoError(t, err)
-	now := time.Now().UnixMilli()
-	payloads := [][]byte{
-		event(3, 5, nil, msg(str(1, id), num(2, now), str(3, "8.0.0"), str(4, "--color=no"), str(5, "test"), str(10, "fixture-host"), str(11, "fixture-user"))),
-		event(14, 16, nil, msg(field(1, msg(str(1, "BUILD_USER"), str(2, "fixture-user"))), field(1, msg(str(1, "BUILD_HOST"), str(2, "fixture-host"))))),
-		event(24, 26, nil, msg(field(1, msg(str(1, "ROLE"), str(2, "CI"))), field(1, msg(str(1, "REPO_URL"), str(2, "https://example.invalid/bes-lifecycle"))), field(1, msg(str(1, "COMMIT_SHA"), str(2, "0123456789abcdef"))), field(1, msg(str(1, "BRANCH_NAME"), str(2, "validation"))))),
-		event(2, 3, num(1, 0), str(1, "state-machine console output\n")),
-		msg(event(9, 14, nil, msg(field(3, str(1, "SUCCESS")), num(2, now+1500))), num(20, 1)),
+	requests := fixtureRequests(t, id, success)
+	ps, proxyErr := proxy.BES.PublishBuildToolEventStream(ctx)
+	require.NoError(t, proxyErr)
+	proxyErr = ps.Send(requests[0])
+	if proxyErr != nil {
+		require.ErrorIs(t, proxyErr, io.EOF)
 	}
-	if !success {
-		payloads[4] = msg(event(9, 14, nil, msg(field(3, msg(str(1, "BUILD_FAILURE"), num(2, 1))), num(2, now+1500))), num(20, 1))
-	}
-	payloads[1], payloads[2] = payloads[2], payloads[1]
-	payloads[0] = msg(payloads[0], field(2, field(14, nil)), field(2, field(24, nil)), field(2, field(2, num(1, 0))), field(2, field(9, nil)))
-
-	requests := make([]*bes.PublishBuildToolEventStreamRequest, len(payloads))
-	for i, b := range payloads {
-		requests[i] = &bes.PublishBuildToolEventStreamRequest{ProjectId: "fixture", OrderedBuildEvent: &bes.OrderedBuildEvent{StreamId: sid, SequenceNumber: int64(i + 1), Event: &bes.BuildEvent{EventTime: timestamppb.Now(), Event: &bes.BuildEvent_BazelEvent{BazelEvent: &anypb.Any{TypeUrl: "type.googleapis.com/build_event_stream.BuildEvent", Value: b}}}}}
-	}
-	finalEvent := &bes.BuildEvent{}
-	require.NoError(t, proto.Unmarshal(field(59, num(1, 1)), finalEvent)) // FINISHED component stream
-	finalEvent.EventTime = timestamppb.Now()
-	requests = append(requests, &bes.PublishBuildToolEventStreamRequest{ProjectId: "fixture", OrderedBuildEvent: &bes.OrderedBuildEvent{StreamId: sid, SequenceNumber: 6, Event: finalEvent}})
+	_, proxyErr = ps.Recv()
+	require.Equal(t, codes.Unimplemented, status.Code(proxyErr))
+	checkProxyInvocationBoundary(t, ctx, c, proxy, id)
 	for _, r := range requests[:4] {
 		require.NoError(t, s.Send(r))
 	}
@@ -250,6 +207,7 @@ func runLifecycle(t *testing.T, success bool) {
 	_, err = s.Recv()
 	require.Equal(t, io.EOF, err)
 	checkModel(t, f, c, model{id: id, state: "COMPLETE_INVOCATION_STATUS", success: success, duration: "1500000"})
+	checkGraph(t, f, c, requests)
 	for i, kind := range []string{"invocationAttemptFinished", "buildFinished"} {
 		statusKey := "invocationStatus"
 		if kind == "buildFinished" {
@@ -259,8 +217,12 @@ func runLifecycle(t *testing.T, success bool) {
 		_, err = grpcRead(t, ctx, c, "google.devtools.build.v1.PublishBuildEvent", "PublishLifecycleEvent", req)
 		require.NoError(t, err)
 		checkModel(t, f, c, model{id: id, state: "COMPLETE_INVOCATION_STATUS", success: success, duration: "1500000"})
+		checkGraph(t, f, c, requests)
+		checkCLI(t, ctx, f, id, "state-machine console output\n")
 	}
 
+	beforeReplay := rpc(t, f, "GetInvocation", map[string]any{"lookup": map[string]any{"invocationId": id}})
+	frozen := objects(t, beforeReplay, "invocation")[0].(map[string]any)
 	// A valid complete replay must neither duplicate metadata nor console output.
 	s, err = c.BES.PublishBuildToolEventStream(ctx)
 	require.NoError(t, err)
@@ -277,6 +239,11 @@ func runLifecycle(t *testing.T, success bool) {
 	_, err = s.Recv()
 	require.Equal(t, io.EOF, err)
 	checkModel(t, f, c, model{id: id, state: "COMPLETE_INVOCATION_STATUS", success: success, duration: "1500000"})
+	afterReplay := rpc(t, f, "GetInvocation", map[string]any{"lookup": map[string]any{"invocationId": id}})
+	replayed := objects(t, afterReplay, "invocation")[0].(map[string]any)
+	for _, key := range []string{"createdAtUsec", "updatedAtUsec"} {
+		require.Equal(t, frozen[key], replayed[key], "replay must preserve "+key)
+	}
 	logs := rpc(t, f, "GetEventLogChunk", map[string]any{"invocationId": id, "chunkId": "0000"})
 	b, err := base64.StdEncoding.DecodeString(logs["buffer"].(string))
 	require.NoError(t, err)
@@ -292,6 +259,7 @@ func runLifecycle(t *testing.T, success bool) {
 	require.Equal(t, al["log"], pl["log"])
 
 	checkCLI(t, ctx, f, id, string(b))
+	checkGraph(t, f, c, requests)
 
 	statReq := map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "aggregationType": "USER_AGGREGATION_TYPE", "query": map[string]any{"user": "fixture-user"}}
 	stats := rpc(t, f, "GetInvocationStat", statReq)
@@ -324,10 +292,33 @@ func runLifecycle(t *testing.T, success bool) {
 	require.Equal(t, codes.Unimplemented, status.Code(err))
 	_, err = f.Web.RPC("GetInvocationFilterSuggestions", map[string]any{"requestContext": f.Web.RequestContext(f.GroupID)})
 	require.ErrorContains(t, err, "Unimplemented")
+	// Audit missed UI downloads before deletion (after complete replay).
+	for _, artifact := range []string{"raw_json", "buildlog"} {
+		code, body := auditDownload(t, ctx, f, id, artifact)
+		require.Equal(t, 200, code)
+		if artifact == "buildlog" {
+			require.Equal(t, "state-machine console output\n", string(body))
+		} else {
+			var events []map[string]any
+			require.NoError(t, json.Unmarshal(body, &events))
+			require.Len(t, events, 5, "raw JSON must contain exactly the published Bazel events after replay")
+			require.Equal(t, id, events[0]["started"].(map[string]any)["uuid"])
+			// The released handler moves stdout into chunked logs and clears it from stored events.
+			require.Contains(t, events[3], "progress")
+			require.Empty(t, events[3]["progress"].(map[string]any)["stdout"])
+			require.Equal(t, map[bool]string{true: "SUCCESS", false: "BUILD_FAILURE"}[success], events[4]["finished"].(map[string]any)["exitCode"].(map[string]any)["name"])
+		}
+		t.Logf("AUDIT download %s: HTTP %d, %d bytes, expected contents", artifact, code, len(body))
+	}
 	// Deletion is a valid invocation mutation exposed by BuildBuddyService.
 	del := map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "invocationId": id}
 	_, err = grpcRead(t, ctx, c, "buildbuddy.service.BuildBuddyService", "DeleteInvocation", del)
 	require.NoError(t, err)
+	checkAbsent(t, f, c, id)
+	out, cliErr := cliOutput(t, ctx, f, id)
+	require.Error(t, cliErr)
+	require.Contains(t, string(out), "NotFound")
+	require.NotContains(t, string(out), "state-machine console output")
 	lookup := map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "lookup": map[string]any{"invocationId": id}}
 	_, err = f.Web.RPC("GetInvocation", lookup)
 	require.ErrorContains(t, err, "NotFound")
@@ -357,28 +348,25 @@ func runLifecycle(t *testing.T, success bool) {
 	ag, err := grpcRead(t, ctx, c, "api.v1.ApiService", "GetInvocation", ar)
 	require.NoError(t, err)
 	require.Empty(t, objects(t, ag, "invocation"))
-}
-
-// Download a released CLI binary, pinned by digest. The subprocess receives only
-// fixture credentials; it inherits no dispatch credentials or user configuration.
-func checkCLI(t *testing.T, ctx context.Context, f *harness.Fixture, id, want string) {
-	t.Helper()
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://github.com/buildbuddy-io/bazel/releases/download/5.0.492/bazel-5.0.492-linux-x86_64", nil)
-	require.NoError(t, err)
-	resp, err := (&http.Client{Timeout: time.Minute}).Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	require.Equal(t, 200, resp.StatusCode)
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 100<<20))
-	require.NoError(t, err)
-	require.Equal(t, "e9e996a1a01555e45433acf9432f9d40d5bda437812a830d6701fe9b09853df9", fmt.Sprintf("%x", sha256.Sum256(data)))
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bb")
-	require.NoError(t, os.WriteFile(path, data, 0755))
-	cmd := exec.CommandContext(ctx, path, "view", id, "--target=grpc://"+f.Endpoint(harness.App).GRPC)
-	cmd.Dir = dir
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + dir, "BUILDBUDDY_API_KEY=" + f.APIKey}
-	out, err := cmd.Output()
-	require.NoError(t, err)
-	require.Equal(t, "===== BUILD LOGS =====\n"+want, string(out))
+	deletedDownloads := map[string]int{}
+	for _, artifact := range []string{"raw_json", "buildlog"} {
+		code, body := auditDownload(t, ctx, f, id, artifact)
+		deletedDownloads[artifact] = code
+		t.Logf("AUDIT deleted download %s: HTTP %d body=%q", artifact, code, body)
+	}
+	_, err = f.Web.RPC("GetEventLogChunk", map[string]any{"invocationId": id, "chunkId": "0000"})
+	require.ErrorContains(t, err, "NotFound")
+	for _, serviceMethod := range [][2]string{{"buildbuddy.service.BuildBuddyService", "GetEventLogChunk"}, {"api.v1.ApiService", "GetLog"}} {
+		req := map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "invocationId": id, "chunkId": "0000"}
+		if serviceMethod[1] == "GetLog" {
+			req = map[string]any{"selector": map[string]any{"invocationId": id}}
+		}
+		_, err = grpcRead(t, ctx, c, serviceMethod[0], serviceMethod[1], req)
+		require.Equal(t, codes.NotFound, status.Code(err))
+	}
+	code, result := api(t, f, "GetLog", map[string]any{"selector": map[string]any{"invocationId": id}})
+	require.NotEqual(t, 200, code)
+	require.Contains(t, result["error"], "NotFound")
+	t.Logf("AUDIT deleted logs: UI/gRPC NotFound; REST HTTP %d body=%v", code, result)
+	// Missing-resource download status is asserted in the isolated bug target.
 }

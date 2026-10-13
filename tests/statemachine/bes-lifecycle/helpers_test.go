@@ -2,14 +2,19 @@ package bes_lifecycle_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/altdansalt/buildbuddy-validation/harness"
+	"github.com/jhump/protoreflect/dynamic"
+	"github.com/jhump/protoreflect/grpcreflect"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
@@ -63,4 +68,54 @@ func objects(t *testing.T, m map[string]any, key string) []any {
 	a, ok := m[key].([]any)
 	require.True(t, ok, "%v", m)
 	return a
+}
+
+// Reflection obtains the released server's own schemas, avoiding a source build.
+func grpcRead(t *testing.T, ctx context.Context, c *harness.Clients, service, method string, req map[string]any) (map[string]any, error) {
+	t.Helper()
+	rc := grpcreflect.NewClientAuto(ctx, c.Conn)
+	defer rc.Reset()
+	sd, err := rc.ResolveService(service)
+	if err != nil {
+		return nil, err
+	}
+	md := sd.FindMethodByName(method)
+	if md == nil {
+		return nil, fmt.Errorf("missing method %s", method)
+	}
+	in, out := dynamic.NewMessage(md.GetInputType()), dynamic.NewMessage(md.GetOutputType())
+	b, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	if err = in.UnmarshalJSON(b); err != nil {
+		return nil, err
+	}
+	if err = c.Conn.Invoke(ctx, "/"+service+"/"+method, in, out, grpc.WaitForReady(false)); err != nil {
+		return nil, err
+	}
+	b, err = out.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]any
+	err = json.Unmarshal(b, &result)
+	return result, err
+}
+
+func auditDownload(t *testing.T, ctx context.Context, f *harness.Fixture, id, artifact string) (int, []byte) {
+	return artifactFetch(t, ctx, f, id, artifact, "download")
+}
+
+func artifactFetch(t *testing.T, ctx context.Context, f *harness.Fixture, id, artifact, route string) (int, []byte) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, "GET", f.Endpoint(harness.App).HTTP+"/file/"+route+"?invocation_id="+id+"&artifact="+artifact+"&attempt=1", nil)
+	require.NoError(t, err)
+	req.Header.Set("x-buildbuddy-api-key", f.APIKey)
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, body
 }
