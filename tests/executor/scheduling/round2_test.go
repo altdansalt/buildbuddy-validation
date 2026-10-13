@@ -111,7 +111,7 @@ func TestSeededPriorityAndStrictGroupFairness(t *testing.T) {
 }
 
 func TestAbruptKillsRetryUntilExhaustion(t *testing.T) {
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}, Args: map[harness.Component][]string{harness.App: {"--remote_execution.lease_duration=2s", "--remote_execution.lease_grace_period=2s", "--remote_execution.lease_reconnect_grace_period=0s"}}})
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}, Config: map[harness.Component]harness.Config{harness.Executor: {"executor": harness.Config{"max_concurrent_tasks": 1}}}, Args: map[harness.Component][]string{harness.App: {"--remote_execution.lease_duration=2s", "--remote_execution.lease_grace_period=2s", "--remote_execution.lease_reconnect_grace_period=0s"}}})
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	c := f.Clients(harness.App)
@@ -141,6 +141,10 @@ attempts:
 		deadline.Stop()
 		ticker.Stop()
 		require.LessOrEqual(t, attempt, 5, "scheduler exceeded its five-claim retry budget")
+		// Never empty the pool: prove the replacement can execute while the
+		// current executor's only slot is occupied by the doomed command.
+		next := f.AddExecutor(harness.Options{})
+		check(t, ctx, c, execute(ctx, c, action(t, ctx, c, "printf replacement-ready", false)), "replacement-ready", 0)
 		t.Logf("operation=%s killing command start=%d executor=%s", name, attempt, current)
 		f.Kill(current, "KILL")
 		require.NotZero(t, f.WaitExit(current, true))
@@ -148,15 +152,13 @@ attempts:
 		// Claims count towards the retry budget before shell startup; a killed
 		// executor may claim a retry during the fault-injection race. Watch the
 		// terminal response as well as the fresh container's marker.
-		current = f.AddExecutor(harness.Options{})
+		current = next
 	}
 	require.GreaterOrEqual(t, kills, 2, "must exercise repeated abrupt failures")
 	require.NoError(t, o.err)
 	require.Equal(t, name, o.name)
 	require.EqualValues(t, 13, o.response.GetStatus().GetCode(), "%v", o.response)
 	require.Contains(t, o.response.GetStatus().GetMessage(), "already attempted 5 times")
-	survivor := f.AddExecutor(harness.Options{})
-	require.NotEmpty(t, survivor)
 	check(t, ctx, c, execute(ctx, c, action(t, ctx, c, "printf healthy-after-exhaustion", false)), "healthy-after-exhaustion", 0)
 }
 

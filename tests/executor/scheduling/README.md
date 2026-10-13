@@ -38,7 +38,9 @@ starvation guarantee or preemption. The organizations have separate disposable
 API keys; all requests address the fixture-local app.
 
 An abrupt-kill test waits for a command-created marker on each fresh executor,
-sends SIGKILL, and replaces that executor through `AddExecutor`. The five-claim retry budget
+starts a replacement through `AddExecutor`, proves it can execute with the
+current executor's only slot occupied, and then sends SIGKILL. The pool never
+loses all registered executors. The five-claim retry budget
 must end with INTERNAL and the scheduler's exhaustion message on the original
 operation. A fresh action must still succeed afterwards. Claims count towards the budget before shell startup, so the test observes both
 fresh command markers and terminal results; it requires at least two injected
