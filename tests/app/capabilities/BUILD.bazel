@@ -37,3 +37,12 @@ go_test(
     tags = ["bug", "local", "requires-network"],
     deps = DEPS,
 )
+
+go_test(
+    name = "unknown_digest_bug_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "unknown_digest_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)

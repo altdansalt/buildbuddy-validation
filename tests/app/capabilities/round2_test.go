@@ -113,6 +113,7 @@ func digestFor(t *testing.T, df repb.DigestFunction_Value, b []byte) *repb.Diges
 	return &repb.Digest{Hash: hex.EncodeToString(sum), SizeBytes: int64(len(b))}
 }
 func TestDigestVectors(t *testing.T) {
+	require.Equal(t, "ac6f86fff630a56a21f59d3a0c1c6907fe3f7cafd5fa916f9b722032f6059ed9", hex.EncodeToString(blake3Small(make([]byte, 100))))
 	require.Equal(t, "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85", hex.EncodeToString(blake3Small([]byte("abc"))))
 	require.Equal(t, "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262", hex.EncodeToString(blake3Small(nil)))
 }
@@ -209,16 +210,20 @@ func TestSeededSplitSpliceCapabilities(t *testing.T) {
 				require.Equal(t, codes.Unimplemented, status.Code(e))
 				return
 			}
-			require.NoError(t, e)
-			require.NotEmpty(t, split.GetChunkDigests())
-			var joined []byte
-			for _, chunk := range split.ChunkDigests {
-				b, e := c.Read(ctx, instance, chunk)
+			// An ordinary upload need not have a chunk mapping (NOT_FOUND is
+			// explicitly allowed). Splice below creates a known mapping.
+			if status.Code(e) != codes.NotFound {
 				require.NoError(t, e)
-				require.Equal(t, harness.Digest(b), chunk)
-				joined = append(joined, b...)
+				var joined []byte
+				for _, chunk := range split.GetChunkDigests() {
+					b, e := c.Read(ctx, instance, chunk)
+					require.NoError(t, e)
+					require.Equal(t, harness.Digest(b), chunk)
+					joined = append(joined, b...)
+				}
+				require.Equal(t, data, joined)
 			}
-			require.Equal(t, data, joined)
+
 			// Splice separately uploaded chunks into a blob that has never been uploaded.
 			left := []byte(fmt.Sprintf("prefix-%d-", rng.Int63()))
 			right := data
@@ -236,6 +241,14 @@ func TestSeededSplitSpliceCapabilities(t *testing.T) {
 			got, e := c.Read(ctx, instance, wd)
 			require.NoError(t, e)
 			require.Equal(t, want, got)
+			if cc.GetSplitBlobSupport() {
+				mapping, e := c.CAS.SplitBlob(ctx, &repb.SplitBlobRequest{InstanceName: instance, BlobDigest: wd, DigestFunction: repb.DigestFunction_SHA256})
+				require.NoError(t, e)
+				require.Len(t, mapping.GetChunkDigests(), 2)
+				require.True(t, proto.Equal(ld, mapping.ChunkDigests[0]))
+				require.True(t, proto.Equal(rd, mapping.ChunkDigests[1]))
+			}
+
 		})
 	}
 }
@@ -244,19 +257,8 @@ func TestUnadvertisedCacheChoicesRejected(t *testing.T) {
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}})
 	c := f.Clients(harness.App)
 	ctx := bounded(t)
-	caps, e := c.Capabilities.GetCapabilities(ctx, &repb.GetCapabilitiesRequest{})
+	_, e := c.Capabilities.GetCapabilities(ctx, &repb.GetCapabilitiesRequest{})
 	require.NoError(t, e)
-	// UNKNOWN denotes inference, not an unsupported algorithm; identity compression
-	// is mandatory even if omitted. Neither belongs in the negative matrix.
-	for _, df := range []repb.DigestFunction_Value{repb.DigestFunction_MD5, repb.DigestFunction_MURMUR3, repb.DigestFunction_VSO, repb.DigestFunction_SHA256TREE, repb.DigestFunction_Value(999)} {
-		if containsDigest(caps.GetCacheCapabilities().GetDigestFunctions(), df) {
-			continue
-		}
-		t.Run(df.String(), func(t *testing.T) {
-			_, e := c.CAS.FindMissingBlobs(bounded(t), &repb.FindMissingBlobsRequest{DigestFunction: df, BlobDigests: []*repb.Digest{{Hash: "900150983cd24fb0d6963f7d28e17f72", SizeBytes: 3}}})
-			require.Contains(t, []codes.Code{codes.InvalidArgument, codes.Unimplemented}, status.Code(e), "unsupported digest must be rejected cleanly: %v", e)
-		})
-	}
 	for _, comp := range []repb.Compressor_Value{repb.Compressor_DEFLATE, repb.Compressor_BROTLI, repb.Compressor_Value(999)} {
 		t.Run(comp.String(), func(t *testing.T) {
 			data := []byte("negative compressor")
@@ -269,12 +271,4 @@ func TestUnadvertisedCacheChoicesRejected(t *testing.T) {
 			require.Contains(t, []int32{int32(codes.InvalidArgument), int32(codes.Unimplemented)}, r.Responses[0].GetStatus().GetCode())
 		})
 	}
-}
-func containsDigest(dfs []repb.DigestFunction_Value, df repb.DigestFunction_Value) bool {
-	for _, v := range dfs {
-		if v == df {
-			return true
-		}
-	}
-	return false
 }
