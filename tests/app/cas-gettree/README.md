@@ -29,3 +29,20 @@ not traversal order, which the spec explicitly leaves unspecified.
 Contract: [REAPI GetTree and message definitions](https://github.com/bazelbuild/remote-apis/blob/6def1c5d27a5/build/bazel/remote/execution/v2/remote_execution.proto).
 Implementation inspected: [v2.314.0 CAS server](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/server/remote_cache/content_addressable_storage_server/content_addressable_storage_server.go).
 All component requests use test-local harness containers and disposable keys.
+
+Round 2 adds SHA384/SHA512 to seeded random DAG coverage, with randomized
+shared-subtree edges and explicit digest functions. The generator bounds expanded
+paths as well as unique nodes, since repeated directory messages are permitted. Independent BLAKE3 wire
+vectors cover a three-directory chain through direct and cold/warm proxy reads
+without adding a shared hash dependency. A single root with 30,000 directory
+entries and 30,000 file entries is uploaded using ByteStream and compared in
+full against the model through both endpoints. Eight concurrent readers overlap
+24 reuploads of one complete immutable tree, alternating app/proxy writes; every
+returned directory set must remain complete. The concurrent case starts with a
+complete tree to avoid conflating it with the existing missing-child finding.
+
+Round 2 validation on the pinned enterprise-v2.314.0 app/proxy images:
+[default seed 314159](https://app.buildbuddy.io/invocation/c9e85f99-03fb-4f78-8243-7246bcd88301)
+and [seed 271828](https://app.buildbuddy.io/invocation/ff6aedb1-cc71-4d2e-8a2d-3c6ceac481f5),
+both with `--config=nobug --nocache_test_results`. No new correctness findings
+were observed in these bounded cases.
