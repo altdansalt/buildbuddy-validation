@@ -1,7 +1,9 @@
 package membership
 
 import (
+	"context"
 	"fmt"
+	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,8 +16,15 @@ import (
 )
 
 type identity struct {
+	ownedDomain               string
+	writeSequence             int
+	seed                      *repb.Digest
+	fixtureHTTP               string
 	web                       *harness.WebSession
 	uid, home, key, manageKey string
+	profile                   map[string]any
+	targetKey, targetID       string
+	cacheClients              []*harness.Clients
 }
 
 func mustHTTP(t *testing.T, w *harness.WebSession, method string, req map[string]any) map[string]any {
@@ -55,7 +64,7 @@ func createIdentity(t *testing.T, f *harness.Fixture, p *issuer, name string) *i
 	if key == "" {
 		t.Fatal("empty local user key")
 	}
-	return &identity{web: w, uid: uid, home: home, key: key}
+	return &identity{web: w, uid: uid, home: home, key: key, profile: object(created["displayUser"])}
 }
 
 // The reference model tracks just the target organization. The home group
@@ -171,14 +180,27 @@ func compareUserGRPC(r fields, uid, gid string, m model) error {
 }
 func check(t *testing.T, conn *grpc.ClientConn, admin, member *identity, gid string, m model) {
 	t.Helper()
-	deadline := time.Now().Add(25 * time.Second)
+	began := time.Now()
+	deadline := began.Add(25 * time.Second)
+	var stableSince time.Time
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	var last error
 	for {
 		last = observe(conn, admin, member, gid, m)
+		if last == nil && member.targetKey != "" {
+			last = observeTargetKey(conn, admin, member, gid, m)
+		}
 		if last == nil {
-			return
+			if stableSince.IsZero() {
+				stableSince = time.Now()
+				t.Logf("state %+v converged after %s", m, time.Since(began))
+			}
+			if time.Since(stableSince) >= time.Second {
+				return
+			}
+		} else {
+			stableSince = time.Time{}
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("state %+v did not converge: %v", m, last)
@@ -194,6 +216,35 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 		}
 		r, err := id.web.RPC("GetUser", map[string]any{"requestContext": id.web.RequestContext(gid)})
 		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(object(r["displayUser"]), id.profile) {
+			return fmt.Errorf("profile changed: %v want %v", r["displayUser"], id.profile)
+		}
+		if len(array(r["userGroup"])) != 1+func() int {
+			if expected.status == 1 {
+				return 1
+			}
+			return 0
+		}() {
+			return fmt.Errorf("unexpected organizations: %v", r["userGroup"])
+		}
+		if object(r["selectedGroup"])["access"] != "ALLOWED" || r["selectedGroupId"] != object(r["selectedGroup"])["groupId"] {
+			return fmt.Errorf("selected access/deprecated ID: %v", r)
+		}
+		hpRPC := []string{}
+		for _, v := range array(r["allowedRpc"]) {
+			hpRPC = append(hpRPC, fmt.Sprint(v))
+		}
+		if err := comparePermissions(hpRPC, func() int {
+			if expected.status != 1 {
+				return 1
+			}
+			if expected.role == 2 {
+				return 1
+			}
+			return 0
+		}()); err != nil {
 			return err
 		}
 		if err = compareUserHTTP(r, id.uid, gid, expected); err != nil {
@@ -214,9 +265,23 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 				return fmt.Errorf("nonadmin organization read should be denied: %v", readErr)
 			}
 		}
-		g, err := rpc(conn, id.key, "GetUser", bytesField(2, requestContext(id.uid, "")))
+		g, err := rpc(conn, id.key, "GetUser", bytesField(2, requestContext(id.uid, id.home)))
 		if err != nil {
 			return fmt.Errorf("gRPC GetUser uid=%s: %w", id.uid, err)
+		}
+		gpRPC := []string{}
+		for _, v := range g[4] {
+			gpRPC = append(gpRPC, string(v))
+		}
+		if err := comparePermissions(gpRPC, 0); err != nil {
+			return fmt.Errorf("gRPC permissions: %w", err)
+		}
+		sg, err := decode(first(g, 9))
+		if err != nil {
+			return err
+		}
+		if string(first(sg, 1)) != id.home || string(first(sg, 2)) != "1" || string(first(g, 3)) != id.home {
+			return fmt.Errorf("gRPC selected home/access differs: %v", g)
 		}
 		if err = compareUserGRPC(g, id.uid, gid, expected); err != nil {
 			return err
@@ -224,6 +289,23 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 		display, err := decode(first(g, 1))
 		if err != nil {
 			return err
+		}
+		name, err := decode(first(display, 2))
+		if err != nil {
+			return err
+		}
+		hp := object(r["displayUser"])
+		hn := object(hp["name"])
+		for field, key := range map[int]string{1: "full", 2: "first", 3: "last"} {
+			if string(first(name, field)) != stringValue(hn[key]) {
+				return fmt.Errorf("gRPC profile name %s differs", key)
+			}
+		}
+		if string(first(display, 3)) != stringValue(hp["profileImageUrl"]) || string(first(display, 6)) != stringValue(hp["username"]) || string(first(display, 5)) != "4" {
+			return fmt.Errorf("gRPC profile differs: %v", display)
+		}
+		if len(g[2]) != len(array(r["userGroup"])) {
+			return fmt.Errorf("gRPC unrelated membership count differs")
 		}
 		if string(first(display, 4)) != stringValue(object(r["displayUser"])["email"]) {
 			return fmt.Errorf("identity email differs across HTTP and gRPC")
@@ -233,14 +315,14 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 		if err != nil {
 			return err
 		}
-		if r["id"] != gid || r["name"] != "Membership target" {
+		if r["id"] != gid || r["name"] != "Membership target" || stringValue(r["ownedDomain"]) != admin.ownedDomain {
 			return fmt.Errorf("HTTP group metadata: %v", r)
 		}
 		g, err = rpc(conn, id.key, "GetGroup", text(1, "membership-target"))
 		if err != nil {
 			return err
 		}
-		if string(first(g, 1)) != gid || string(first(g, 2)) != "Membership target" {
+		if string(first(g, 1)) != gid || string(first(g, 2)) != "Membership target" || string(first(g, 3)) != admin.ownedDomain {
 			return fmt.Errorf("gRPC group metadata: %v", g)
 		}
 	}
@@ -268,6 +350,9 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 		for _, v := range array(r["user"]) {
 			u := object(v)
 			if object(object(u["user"])["userId"])["id"] != member.uid {
+				if object(object(u["user"])["userId"])["id"] != admin.uid || u["role"] != "ADMIN_ROLE" || u["groupMembershipStatus"] != "MEMBER" || !reflect.DeepEqual(object(u["user"]), admin.profile) {
+					return fmt.Errorf("unexpected HTTP roster row: %v", u)
+				}
 				continue
 			}
 			count++
@@ -285,6 +370,15 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 		wantCount := 0
 		if wanted {
 			wantCount = 1
+		}
+		total := wantCount
+		for _, s := range statuses {
+			if s == 1 {
+				total++
+			}
+		}
+		if len(array(r["user"])) != total {
+			return fmt.Errorf("HTTP full roster size %d want %d", len(array(r["user"])), total)
 		}
 		if count != wantCount {
 			return fmt.Errorf("HTTP filtered roster count %d want %d", count, wantCount)
@@ -308,6 +402,9 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 				return err
 			}
 			if string(first(id, 1)) != member.uid {
+				if string(first(id, 1)) != admin.uid || string(first(u, 2)) != "1" || string(first(u, 3)) != "2" {
+					return fmt.Errorf("unexpected gRPC roster row: %v", u)
+				}
 				continue
 			}
 			count++
@@ -318,6 +415,9 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 				return fmt.Errorf("gRPC roster role/status differs from %+v: %v", m, u)
 			}
 		}
+		if len(g[2]) != total {
+			return fmt.Errorf("gRPC full roster size %d want %d", len(g[2]), total)
+		}
 		if count != wantCount {
 			return fmt.Errorf("gRPC filtered roster count %d want %d", count, wantCount)
 		}
@@ -325,17 +425,34 @@ func observe(conn *grpc.ClientConn, admin, member *identity, gid string, m model
 	return nil
 }
 func TestMembershipStateMachine(t *testing.T) {
+	cli := downloadCLI(t)
 	p := startIssuer(t)
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}, SkipAuthBootstrap: true,
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}, SkipAuthBootstrap: true,
+		Args:   map[harness.Component][]string{harness.App: {"--auth.api_key_group_cache_ttl=0"}, harness.CacheProxy: {"--auth.remote.jwt_cache_ttl=2s"}},
 		Config: map[harness.Component]harness.Config{harness.App: {"auth": harness.Config{"enable_self_auth": false, "disable_refresh_token": true, "oauth_providers": []any{harness.Config{"issuer_url": p.url, "client_id": "membership-client", "client_secret": "fixture-secret"}}}, "app": harness.Config{"create_group_per_user": false, "user_owned_keys_enabled": true}}}})
 	admin := createIdentity(t, f, p, "admin")
 	member := createIdentity(t, f, p, "member")
 	gid := stringValue(mustHTTP(t, admin.web, "CreateGroup", map[string]any{"requestContext": admin.web.RequestContext(admin.home), "name": "Membership target", "urlIdentifier": "membership-target", "userOwnedKeysEnabled": true})["id"])
 	// The admin key must belong to the target organization for organization reads.
-	admin.manageKey = stringValue(object(mustHTTP(t, admin.web, "CreateApiKey", map[string]any{"requestContext": admin.web.RequestContext(gid), "userId": admin.uid, "label": "target admin", "capability": []string{"ORG_ADMIN"}})["apiKey"])["value"])
+	admin.manageKey = stringValue(object(mustHTTP(t, admin.web, "CreateApiKey", map[string]any{"requestContext": admin.web.RequestContext(gid), "userId": admin.uid, "label": "target admin", "capability": []string{"ORG_ADMIN", "CACHE_WRITE", "CAS_WRITE"}})["apiKey"])["value"])
 	conn := f.Clients(harness.App).Conn
+	seedCtx, seedCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer seedCancel()
+	seedClient := harness.Dial(t, f.Endpoint(harness.App).GRPC, admin.manageKey)
+	var seedErr error
+	member.seed, seedErr = seedClient.Upload(seedCtx, "", []byte("membership surface seed"))
+	if seedErr != nil {
+		t.Fatal(seedErr)
+	}
+	_, seedErr = seedClient.AC.UpdateActionResult(seedCtx, &repb.UpdateActionResultRequest{ActionDigest: member.seed, ActionResult: &repb.ActionResult{ExitCode: 17}})
+	if seedErr != nil {
+		t.Fatal(seedErr)
+	}
+	member.fixtureHTTP = f.Endpoint(harness.App).HTTP
 	state := model{}
 	check(t, conn, admin, member, gid, state)
+	checkCLI(t, cli, f.Endpoint(harness.App).GRPC, member, state)
+	checkCacheWrites(t, member, seedClient, state)
 	steps := []struct {
 		name         string
 		action, role int
@@ -389,7 +506,15 @@ func TestMembershipStateMachine(t *testing.T) {
 				t.Fatal(err)
 			}
 			state = s.want
+			if s.name == "approve" {
+				k := object(mustHTTP(t, admin.web, "CreateUserApiKey", map[string]any{"requestContext": admin.web.RequestContext(gid), "userId": member.uid, "label": "sequence key", "capability": []string{"CACHE_WRITE", "CAS_WRITE"}})["apiKey"])
+				member.targetKey = stringValue(k["value"])
+				member.targetID = stringValue(k["id"])
+				member.cacheClients = []*harness.Clients{harness.Dial(t, f.Endpoint(harness.App).GRPC, member.targetKey), harness.Dial(t, f.Endpoint(harness.CacheProxy).GRPC, member.targetKey)}
+			}
 			check(t, conn, admin, member, gid, state)
+			checkCLI(t, cli, f.Endpoint(harness.App).GRPC, member, state)
+			checkCacheWrites(t, member, seedClient, state)
 		})
 	}
 	// Configure an owned-domain join policy using the ordinary UI setting.
@@ -399,6 +524,8 @@ func TestMembershipStateMachine(t *testing.T) {
 		"name": "Membership target", "urlIdentifier": "membership-target",
 		"autoPopulateFromOwnedDomain": true, "userOwnedKeysEnabled": true,
 	})
+	admin.ownedDomain = "membership.test"
+	check(t, conn, admin, member, gid, state)
 	for i := 0; i < 2; i++ {
 		_, err := rpc(conn, member.key, "JoinGroup", join(text(1, gid), bytesField(2, requestContext(member.uid, member.home))))
 		if err != nil {
@@ -406,6 +533,8 @@ func TestMembershipStateMachine(t *testing.T) {
 		}
 		state = model{1, 1}
 		check(t, conn, admin, member, gid, state)
+		checkCLI(t, cli, f.Endpoint(harness.App).GRPC, member, state)
+		checkCacheWrites(t, member, seedClient, state)
 		if i == 0 {
 			_, err = rpc(conn, admin.manageKey, "UpdateGroupUsers", join(bytesField(1, requestContext(admin.uid, gid)), text(2, gid), bytesField(3, join(bytesField(1, text(1, member.uid)), number(2, 2)))))
 			if err != nil {
@@ -413,6 +542,8 @@ func TestMembershipStateMachine(t *testing.T) {
 			}
 			state = model{}
 			check(t, conn, admin, member, gid, state)
+			checkCLI(t, cli, f.Endpoint(harness.App).GRPC, member, state)
+			checkCacheWrites(t, member, seedClient, state)
 		}
 	}
 	_, err := rpc(conn, admin.manageKey, "UpdateGroupUsers", join(bytesField(1, requestContext(admin.uid, gid)), text(2, gid), bytesField(3, join(bytesField(1, text(1, member.uid)), number(2, 2)))))
@@ -421,9 +552,13 @@ func TestMembershipStateMachine(t *testing.T) {
 	}
 	state = model{}
 	check(t, conn, admin, member, gid, state)
+	checkCLI(t, cli, f.Endpoint(harness.App).GRPC, member, state)
+	checkCacheWrites(t, member, seedClient, state)
 	// Re-login the removed user: a fresh session must see the same state.
 	member.web = login(t, f, p, "member")
 	member.web.UserID = map[string]any{"id": member.uid}
 	check(t, conn, admin, member, gid, state)
+	checkCLI(t, cli, f.Endpoint(harness.App).GRPC, member, state)
+	checkCacheWrites(t, member, seedClient, state)
 	t.Logf("images: app=%s", f.Endpoint(harness.App).Image)
 }
