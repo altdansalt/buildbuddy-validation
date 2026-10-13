@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -93,7 +94,7 @@ func TestCacheLifecycle(t *testing.T) {
 				cached, err := ac(t, ctx, c, instance, d)
 				if cacheable {
 					require.NoError(t, err)
-					require.Equal(t, r.Result.OutputFiles[0].Digest, cached.OutputFiles[0].Digest)
+					require.True(t, proto.Equal(r.Result.OutputFiles[0].Digest, cached.OutputFiles[0].Digest))
 				} else {
 					require.Equal(t, codes.NotFound, status.Code(err))
 				}
@@ -127,22 +128,22 @@ func TestSkipLookupReplacesCachedResult(t *testing.T) {
 	require.NoError(t, err)
 	hit := execute(t, ctx, c, instance, d, false)
 	require.True(t, hit.CachedResult)
-	require.Equal(t, seed, hit.Result.OutputFiles[0].Digest)
+	require.True(t, proto.Equal(seed, hit.Result.OutputFiles[0].Digest))
 	fresh := execute(t, ctx, c, instance, d, true)
 	require.Zero(t, fresh.GetStatus().GetCode())
 	require.Zero(t, fresh.Result.ExitCode)
 	require.False(t, fresh.CachedResult)
 	require.Len(t, fresh.Result.OutputFiles, 1)
-	require.NotEqual(t, seed, fresh.Result.OutputFiles[0].Digest)
+	require.False(t, proto.Equal(seed, fresh.Result.OutputFiles[0].Digest))
 	cached, err := ac(t, ctx, c, instance, d)
 	require.NoError(t, err)
-	require.Equal(t, fresh.Result.OutputFiles[0].Digest, cached.OutputFiles[0].Digest)
+	require.True(t, proto.Equal(fresh.Result.OutputFiles[0].Digest, cached.OutputFiles[0].Digest))
 	again := execute(t, ctx, c, instance, d, false)
 	require.True(t, again.CachedResult)
-	require.Equal(t, fresh.Result.OutputFiles[0].Digest, again.Result.OutputFiles[0].Digest)
+	require.True(t, proto.Equal(fresh.Result.OutputFiles[0].Digest, again.Result.OutputFiles[0].Digest))
 	// Identical action bytes in another instance must not hit the original AC entry.
 	other := action(t, ctx, c, instance+"-other", nonce+"exit 0", false, 20*time.Second)
-	require.Equal(t, d, other)
+	require.True(t, proto.Equal(d, other))
 	isolated := execute(t, ctx, c, instance+"-other", other, false)
 	require.False(t, isolated.CachedResult)
 	require.Zero(t, isolated.GetStatus().GetCode())
@@ -180,10 +181,10 @@ func TestSkipLookupDoesNotWriteIneligibleResults(t *testing.T) {
 			require.Equal(t, tc.exit, r.Result.ExitCode)
 			require.False(t, r.CachedResult)
 			require.Len(t, r.Result.OutputFiles, 1)
-			require.NotEqual(t, seed, r.Result.OutputFiles[0].Digest)
+			require.False(t, proto.Equal(seed, r.Result.OutputFiles[0].Digest))
 			cached, err := ac(t, ctx, c, instance, d)
 			require.NoError(t, err)
-			require.Equal(t, seed, cached.OutputFiles[0].Digest)
+			require.True(t, proto.Equal(seed, cached.OutputFiles[0].Digest))
 		})
 	}
 }
