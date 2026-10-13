@@ -34,11 +34,17 @@ func httpDownload(ctx context.Context, base, key, rn string) (int, string, error
 // TestRemovedMemberHTTPDownload checks that /file/download rejects a removed
 // member's user-owned key, like every gRPC cache read does. Controls with a
 // bogus key and no credentials show whether the endpoint enforces auth at all.
-func TestRemovedMemberHTTPDownload(t *testing.T) {
+func TestRemovedMemberHTTPDownload(t *testing.T) { runRemovedMemberHTTPDownload(t, false) }
+
+// Same sequence with the harness's anonymous-usage default switched off, to
+// show whether the divergence depends on that non-release-default fixture setting.
+func TestRemovedMemberHTTPDownloadNoAnonymous(t *testing.T) { runRemovedMemberHTTPDownload(t, true) }
+
+func runRemovedMemberHTTPDownload(t *testing.T, noAnonymous bool) {
 	p := startIssuer(t)
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}, SkipAuthBootstrap: true,
 		Args:   map[harness.Component][]string{harness.App: {"--auth.api_key_group_cache_ttl=0"}},
-		Config: map[harness.Component]harness.Config{harness.App: {"auth": harness.Config{"enable_self_auth": false, "disable_refresh_token": true, "oauth_providers": []any{harness.Config{"issuer_url": p.url, "client_id": "membership-client", "client_secret": "fixture-secret"}}}, "app": harness.Config{"create_group_per_user": false, "user_owned_keys_enabled": true}}}})
+		Config: map[harness.Component]harness.Config{harness.App: {"auth": harness.Config{"enable_anonymous_usage": !noAnonymous, "enable_self_auth": false, "disable_refresh_token": true, "oauth_providers": []any{harness.Config{"issuer_url": p.url, "client_id": "membership-client", "client_secret": "fixture-secret"}}}, "app": harness.Config{"create_group_per_user": false, "user_owned_keys_enabled": true}}}})
 	admin := createIdentity(t, f, p, "admin")
 	member := createIdentity(t, f, p, "member")
 	gid := stringValue(mustHTTP(t, admin.web, "CreateGroup", map[string]any{"requestContext": admin.web.RequestContext(admin.home), "name": "Membership target", "urlIdentifier": "membership-target", "userOwnedKeysEnabled": true})["id"])

@@ -40,7 +40,7 @@ go_test(
     name = "download_bug",
     size = "large",
     timeout = "long",
-    args = ["-test.run=^TestRemovedMemberHTTPDownload$$"],
+    args = ["-test.run=^TestRemovedMemberHTTPDownload"],
     srcs = ["download_bug_test.go", "membership_test.go", "revocation_test.go", "effective_test.go", "cli_test.go", "permissions_test.go", "cache_writes_test.go", "oidc_test.go", "wire_test.go"],
     tags = ["bug", "local", "requires-network"],
     deps = [
