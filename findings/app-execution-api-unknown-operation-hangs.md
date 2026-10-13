@@ -79,3 +79,12 @@ to reject default-configuration behavior. Severity remains **medium**: failure t
 detect missing operation state obstructs retry/recovery, but this test proves no
 crash, cross-group access or ordinary execution data loss. The exact app image
 and digest above remain unchanged; no image or config override was used.
+
+Additional disproof control: the existing
+`//tests/app/execution-api:go_default_test` target passed uncached on the same
+PR #89 checkout using `--config=nobug --test_tag_filters=`. Its malformed-name,
+normal execution/replay and monitored unknown/expired-stream checks passed,
+including a five-second bound for the monitored missing-stream response. This
+supports the default-path diagnosis and rules out a generally broken execution
+fixture. [Control test invocation](https://app.buildbuddy.io/invocation/9085b8b7-675c-4b96-950c-51e38e623ccc),
+[control runner invocation](https://app.buildbuddy.io/invocation/4c05d348-c6a3-4161-bcdc-b0f5f8c00599).
