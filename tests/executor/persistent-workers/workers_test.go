@@ -132,3 +132,20 @@ func TestProtocolReuseAndUpdatedInputs(t *testing.T) {
 		})
 	}
 }
+func TestWorkerExitRecovery(t *testing.T) {
+	t.Logf("seed=%d", *seed)
+	f := start(t)
+	for _, protocol := range []string{"json", "proto"} {
+		t.Run(protocol, func(t *testing.T) {
+			r, before := f.run(t, protocol, protocol+"-crash", "before", []string{"ok"}, true)
+			success(t, r)
+			r, _ = f.run(t, protocol, protocol+"-crash", "crash", []string{"CRASH"}, true)
+			require.True(t, r.GetStatus().GetCode() != 0 || r.GetResult().GetExitCode() != 0, "worker crash must fail request")
+			r, after := f.run(t, protocol, protocol+"-crash", "after", []string{"recovered"}, true)
+			success(t, r)
+			require.Equal(t, "after", after.Content)
+			require.NotEqual(t, before.PID, after.PID)
+			require.Equal(t, 1, after.Count)
+		})
+	}
+}
