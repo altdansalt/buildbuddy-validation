@@ -25,8 +25,8 @@ Coverage:
   Pebble cache with incompressible blobs, proves the output bytes return
   `NOT_FOUND`, and builds a new local consumer in the same Bazel output base. Both app and proxy
   caches are churned, and both must return `NOT_FOUND` before the consumer runs.
-  The app has zero minimum eviction age and a one-second sampler refresh;
-  both app and proxy have these test-only settings make eviction practical without touching other caches.
+  Both caches have zero minimum eviction age and a one-second sampler refresh;
+  these test-only settings make eviction practical without touching other caches.
 
 Contracts used:
 
@@ -46,3 +46,7 @@ Round 2 adds three simultaneous async-upload clients sharing 12 seeded outputs
 (seed `314159`), followed by a fresh read-only cache client that must hit every
 action and verify every byte. Eviction churn uses replayable seed `20261012`.
 Bazel 7 uses its experimental async flag; Bazel 8 uses the stable flag.
+
+Validation: [initial matrix run](https://app.buildbuddy.io/invocation/44df54ac-8dc3-4dda-82bd-26db87356120)
+and [pushed branch run with forced concurrent uploads](https://app.buildbuddy.io/invocation/e3477ca0-ba3e-4cb8-a20e-fe664396c99d)
+passed on the default digest-pinned enterprise-v2.314.0 images. No defect was observed.
