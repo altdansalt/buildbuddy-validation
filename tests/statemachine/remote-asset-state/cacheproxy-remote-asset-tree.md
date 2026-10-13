@@ -7,7 +7,7 @@ Severity: low
 Severity justification: Directory traversal fails for readable proxy assets. No corruption or auth boundary crossing demonstrated.
 Status: confirmed
 Repro test target: //tests/statemachine/remote-asset-state:proxy_tree_bug_test
-BuildBuddy invocation: https://app.buildbuddy.io/invocation/5d069f6e-a0c2-4533-838f-944260af5806
+BuildBuddy invocation: https://app.buildbuddy.io/invocation/9a759ad9-a64d-4d5b-a5f1-e615e7ff75a4
 
 ## Expected behavior
 
@@ -15,7 +15,7 @@ A valid serialized Directory fetched to the proxy CAS should be readable through
 
 ## Actual behavior
 
-ByteStream reads the exact Directory bytes, but proxy GetTree returns FailedPrecondition naming the root digest (not a missing child). Reproduced twice with separate fresh fixtures via -test.count=2: https://app.buildbuddy.io/invocation/5d069f6e-a0c2-4533-838f-944260af5806 . Independent state-machine reproduction: https://app.buildbuddy.io/invocation/2d78fe4b-c911-4783-8758-c870709fa482 and passing negative coverage https://app.buildbuddy.io/invocation/c22a3509-1175-40d4-b8cd-69f89f315c25 . App-fetched directories succeed through both CAS endpoints, UI tree RPC and CLI JSON decoding.
+ByteStream reads the exact Directory bytes, but proxy GetTree returns FailedPrecondition naming the root digest (not a missing child). Reproduced twice with separate fresh fixtures via -test.count=2: https://app.buildbuddy.io/invocation/9a759ad9-a64d-4d5b-a5f1-e615e7ff75a4 . Independent state-machine reproduction: https://app.buildbuddy.io/invocation/2d78fe4b-c911-4783-8758-c870709fa482 and passing negative coverage https://app.buildbuddy.io/invocation/c22a3509-1175-40d4-b8cd-69f89f315c25 . App-fetched directories succeed through both CAS endpoints, UI tree RPC and CLI JSON decoding.
 
 ## Logs excerpt
 

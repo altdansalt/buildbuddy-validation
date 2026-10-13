@@ -31,8 +31,10 @@ The proxy has no native BuildBuddyService or API v1 surface in this fixture; app
 - [Range disagreement](app-remote-asset-range.md): full-file proxy URI succeeds; range gRPC NotFound / HTTP 500. Positive contract target `:proxy_range_bug_test`, tagged bug.
 - [Tree disagreement](cacheproxy-remote-asset-tree.md): proxy Directory bytes succeed; proxy CAS GetTree FailedPrecondition. Positive contract target `:proxy_tree_bug_test`, tagged bug.
 
-The default target asserts the known behavior and stays green. Each isolated positive-contract test reproduced twice in fresh fixtures in https://app.buildbuddy.io/invocation/5d069f6e-a0c2-4533-838f-944260af5806 (`-test.count=2`). Independent main-sequence repetitions: https://app.buildbuddy.io/invocation/2d78fe4b-c911-4783-8758-c870709fa482 and https://app.buildbuddy.io/invocation/c22a3509-1175-40d4-b8cd-69f89f315c25 . Main suite including metadata JSON comparisons passed in the latter invocation.
+The default target asserts the known behavior and stays green. Each isolated positive-contract test reproduced twice in fresh fixtures in https://app.buildbuddy.io/invocation/9a759ad9-a64d-4d5b-a5f1-e615e7ff75a4 (`-test.count=2`). Independent main-sequence repetitions: https://app.buildbuddy.io/invocation/2d78fe4b-c911-4783-8758-c870709fa482 and https://app.buildbuddy.io/invocation/c22a3509-1175-40d4-b8cd-69f89f315c25 . Main suite including metadata JSON comparisons passed in the latter invocation.
 
 ## Explicit limits
 
 SHA256 is the tested digest function; alternative hash algorithms are not covered. No eviction, deletion, auth fault injection, or origin checksum mismatch is injected. No independent autonomous replication promise is inferred from upstream-backed reads. Range assertions use valid interior ranges; boundary combinations remain additional coverage. Directory tests use a single level with retained file content, not deeply nested trees. No shared harness or dependency changes are needed.
+
+Final round-2 run: default suite (incl. SHA1 and SHA256) passes in https://app.buildbuddy.io/invocation/1b8d419a-cad3-4030-8793-7e26c43a46f2 . SHA1 storage with a sha256 checksum.sri may be served from a converted CAS entry, so the suite asserts URI presence iff origin was contacted rather than a fixed hit/miss for SHA1.

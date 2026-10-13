@@ -7,7 +7,7 @@ Severity: low
 Severity justification: A valid proxy-addressed asset can be downloaded but cannot be read through the app range API. No corruption or auth boundary crossing demonstrated.
 Status: confirmed
 Repro test target: //tests/statemachine/remote-asset-state:proxy_range_bug_test
-BuildBuddy invocation: https://app.buildbuddy.io/invocation/5d069f6e-a0c2-4533-838f-944260af5806
+BuildBuddy invocation: https://app.buildbuddy.io/invocation/9a759ad9-a64d-4d5b-a5f1-e615e7ff75a4
 
 ## Expected behavior
 
