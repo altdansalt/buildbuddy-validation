@@ -44,3 +44,11 @@ hard resident-byte quota. Each batch stays below the RPC size ceiling.
 `//tests/app/cas-batch:malformed_zstd_bug_test` isolates the suspected malformed
 zstd status classification defect: client data currently gets INTERNAL instead
 of INVALID_ARGUMENT, while a valid peer succeeds. It is excluded by `nobug`.
+
+Round 2 validation on 2026-10-13:
+
+- [Passing full nobug suite](https://app.buildbuddy.io/invocation/d620b13c-cf87-4ff7-8f51-819fe753c201)
+  (`--test_arg=-test.v`): all three non-default digest functions ran and passed.
+- [Malformed-zstd minimal repro, run 1](https://app.buildbuddy.io/invocation/96cc87f3-6cca-46f5-9156-aa56a81b56f1)
+  and [run 2](https://app.buildbuddy.io/invocation/fbe4e3da-10b5-4505-9324-c0a0e58628e1),
+  both uncached and failing only the invalid-item status assertion.
