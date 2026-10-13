@@ -71,3 +71,31 @@ and recycled-runner signal classification remain outside this area coverage.
 Docker action images use `mirror.gcr.io/library/alpine:3.21.3` to avoid Docker Hub
 pull rate limits. The OOM test applies its memory limit after the container starts;
 it validates reporting, not enforcement of an executor platform memory property.
+
+Round 3 adds `TestSeededProcessTreeTermination`: eight generated process trees
+per isolation mode, alternating action deadlines and invocation cancellations.
+The default seed is 314003; replay another corpus with
+`--test_arg=-tree_seed=123 --nocache_test_results`. Each case logs its seed,
+index, isolation, delay and exact shell script. Trees have 3–7 shell nodes,
+random parent edges, background children, guaranteed grandchildren and a
+session-detached TERM ignorer, plus randomized TERM disposition and detachment.
+All nodes continuously append to a declared `partial.txt` output. Deadlines and
+cancellation delays vary from 1.2–2.499 seconds. Cancellation first independently
+observes the action's unique inherited environment token in live processes.
+
+The property requires DeadlineExceeded or Canceled as appropriate; partial
+stdout/files cannot turn an interrupted action into success. Returned partial
+files are fetched and inspected. Bare cleanup scans `/proc/*/environ` inside
+only the fixture executor, including reparented and detached descendants;
+zombies have no executable state/environment and are excluded. Docker cleanup
+requires no running action containers on the fixture-owned daemon, which also
+removes their process namespaces. Both checks are repeated after a short delay.
+Cancellation can publish its response before lease renewal, so physical cleanup
+has the same 25-second bound as round 2. This checks eventual cleanup, not an
+instantaneous guarantee at terminal-operation delivery.
+
+Known exceptions are kept in their separate bug targets: randomized cases omit
+nonzero termination grace periods, avoiding the graceful-parent-orphan defect
+and Docker's unimplemented graceful signaling. The strict hard-stop cleanup
+invariant still applies to every generated tree. No graceful-orphan survivor is
+silently accepted by the randomized oracle.

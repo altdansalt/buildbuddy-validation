@@ -19,6 +19,16 @@ const instance = "timeouts-cancel"
 
 func upload(t *testing.T, ctx context.Context, c *harness.Clients, script string, timeout time.Duration, props ...*repb.Platform_Property) *repb.Digest {
 	t.Helper()
+	return uploadCommand(t, ctx, c, script, timeout, nil, props...)
+}
+
+func uploadTree(t *testing.T, ctx context.Context, c *harness.Clients, script string, timeout time.Duration, props ...*repb.Platform_Property) *repb.Digest {
+	t.Helper()
+	return uploadCommand(t, ctx, c, script, timeout, []string{"partial.txt"}, props...)
+}
+
+func uploadCommand(t *testing.T, ctx context.Context, c *harness.Clients, script string, timeout time.Duration, outputs []string, props ...*repb.Platform_Property) *repb.Digest {
+	t.Helper()
 	root, err := c.UploadProto(ctx, instance, &repb.Directory{})
 	require.NoError(t, err)
 	platform := []*repb.Platform_Property{{Name: "Arch", Value: "amd64"}, {Name: "OSFamily", Value: "linux"}, {Name: "workload-isolation-type", Value: "none"}}
@@ -36,7 +46,7 @@ func upload(t *testing.T, ctx context.Context, c *harness.Clients, script string
 		}
 	}
 	sort.Slice(platform, func(i, j int) bool { return platform[i].Name < platform[j].Name })
-	cmd, err := c.UploadProto(ctx, instance, &repb.Command{Arguments: []string{"/bin/sh", "-c", script}, Platform: &repb.Platform{Properties: platform}})
+	cmd, err := c.UploadProto(ctx, instance, &repb.Command{Arguments: []string{"/bin/sh", "-c", script}, Platform: &repb.Platform{Properties: platform}, OutputPaths: outputs})
 	require.NoError(t, err)
 	action := &repb.Action{CommandDigest: cmd, InputRootDigest: root, DoNotCache: true}
 	if timeout != 0 {
