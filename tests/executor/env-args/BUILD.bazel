@@ -31,6 +31,6 @@ go_test(
     size = "large",
     timeout = "long",
     srcs = ["helpers_test.go", "docker_helpers_test.go", "round2_test.go"],
-    tags = ["local", "requires-network"],
+    tags = ["exclusive", "local", "requires-network"],
     deps = DEPS,
 )
