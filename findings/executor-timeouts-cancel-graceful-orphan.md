@@ -106,3 +106,55 @@ Attempts to disprove the report:
 Severity remains **medium**: a bounded action can continue resource use and
 filesystem mutation after timeout. This establishes no host escape or
 cross-group access; Docker and Firecracker are outside the verified scope.
+
+## Version history
+
+Tested on 2026-10-13 using the unchanged bug-tagged reproducer from
+`origin/area/executor-timeouts-cancel` at `73e42db9da019e3a6665d257d54423ce1fe8b67a`.
+App, Redis and executor were started inside each test on hosted `bb remote`
+runners, with fixture-local endpoints and disposable local credentials.
+No BuildBuddy component was built from source.
+
+| Enterprise release (release date, UTC) | Result | BuildBuddy invocation |
+| --- | --- | --- |
+| v2.314.0 (2026-10-08) | Reproduces | [run](https://app.buildbuddy.io/invocation/e5764150-4a48-4b6e-ad0c-c98b8f31468f) |
+| v2.313.0 (2026-10-06) | Reproduces | [run](https://app.buildbuddy.io/invocation/cb317630-52ba-4f3e-b30f-28fd56347f43) |
+| v2.290.0 (2026-07-29) | Reproduces | [run](https://app.buildbuddy.io/invocation/62408081-e0dc-402f-969a-94cb0f12b958) |
+| v2.275.0 (2026-06-04) | Reproduces | [run](https://app.buildbuddy.io/invocation/f947859e-1e56-4cf2-ac7f-e13f61bb2577) |
+| v2.258.0 (2026-04-09) | Reproduces | [run](https://app.buildbuddy.io/invocation/e573a509-15e0-4647-aa4d-cd1a6f4fbb49); [independent repeat](https://app.buildbuddy.io/invocation/625e4a40-dd8d-45b3-b0d2-8f5041715a49) |
+
+All five releases failed at the finding's intended assertion: After the expected
+DEADLINE_EXCEEDED response, the later probe returned OK, exit 9 and "survived".
+The oldest release was reproduced in two independent fresh fixtures.
+
+**Earliest tested reproducing release: v2.258.0 (2026-04-09).** The defect
+was present at or before that release; its actual introduction is unknown.
+No earlier release or known-good boundary was tested, so this is an upper
+bound on introduction, not evidence that v2.258.0 introduced it.
+
+No release-specific configuration changes were needed for these five releases.
+
+Command template, substituting the matching digests from the table below:
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/executor/timeouts-cancel:graceful_timeout_child_test \
+  --test_tag_filters=bug --nocache_test_results --test_output=all \
+  --test_arg=-harness.app_image=gcr.io/flame-public/buildbuddy-app-enterprise@<app-digest> \
+  --test_arg=-harness.executor_image=gcr.io/flame-public/buildbuddy-executor-enterprise@<executor-digest>
+```
+
+### Exact release pins
+
+Both components were overridden together. These linux/amd64 manifest digests
+were resolved from the GCR registry API, and the fixture logs identify the
+requested digest references. App repository:
+`gcr.io/flame-public/buildbuddy-app-enterprise`; executor repository:
+`gcr.io/flame-public/buildbuddy-executor-enterprise`.
+
+| Enterprise release | App digest | Executor digest |
+| --- | --- | --- |
+| v2.314.0 | `sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` | `sha256:7d178c9ae49b0749dc0b509c471c1477ed548c8330441d37fed3b5a68ab364b8` |
+| v2.313.0 | `sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` | `sha256:8f7c2662f5fcd0ab888113f6d36d31cde8b8ea254434a8177cf6996b01155afe` |
+| v2.290.0 | `sha256:f3b285107f28da495e9496dd848857ce0cf6cddbf3fac8743b259c2a7a8678b6` | `sha256:2c65048231e21ecf0c60623bc5f8ccaf494e82828077c5064aa994909e15607a` |
+| v2.275.0 | `sha256:75ffd43cf6dc14ccf5a652b760d7e4d7390dfa7870524c57e7f354f271e96db1` | `sha256:d2dbe25032467449c80e9eb18002d56b57bcf5247cba267ab886022415b30956` |
+| v2.258.0 | `sha256:f7b499d817581e58c1fe826c6441a7773519488d4500dc6ffafad387d2c990c4` | `sha256:500703561ba144c64b12a36f0d3350422f09efe693b8e24592414958ea6753cd` |

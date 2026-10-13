@@ -158,3 +158,93 @@ This independently validates the isolation oracle and property parsing.
 ```sh
 GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/executor/isolation-docker:go_default_test --config=nobug --test_filter='TestDockerIsolation/(network_on|dockerNetwork_off|invalid_network)$' --nocache_test_results --test_output=all
 ```
+
+## Version history
+
+Tested on 2026-10-13 using the unchanged bug-tagged reproducer from
+`origin/area/executor-isolation-docker` at `58df56cac5523babb4c474ed9149fd02de20dddb`.
+App, Redis, executor and action containers were started inside the test on
+hosted `bb remote` runners, using fixture-local endpoints and credentials.
+No BuildBuddy component was built from source.
+
+| Enterprise release (release date, UTC) | Result | BuildBuddy invocation |
+| --- | --- | --- |
+| v2.314.0 (2026-10-08) | Reproduces in both subcases | [runner log, VERSION 2.314.0](https://app.buildbuddy.io/invocation/ad4713a2-76ec-49c0-b1ad-1e8df67bedd2) |
+| v2.313.0 (2026-10-06) | Reproduces in both subcases | [runner log, VERSION 2.313.0](https://app.buildbuddy.io/invocation/ad4713a2-76ec-49c0-b1ad-1e8df67bedd2) |
+| v2.290.0 (2026-07-29) | Reproduces in both subcases | [runner log, VERSION 2.290.0](https://app.buildbuddy.io/invocation/ad4713a2-76ec-49c0-b1ad-1e8df67bedd2) |
+| v2.275.0 (2026-06-04) | Reproduces in both subcases | [runner log, VERSION 2.275.0](https://app.buildbuddy.io/invocation/ad4713a2-76ec-49c0-b1ad-1e8df67bedd2) |
+| v2.258.0 (2026-04-09) | Reproduces in both subcases | [runner log, VERSION 2.258.0](https://app.buildbuddy.io/invocation/ad4713a2-76ec-49c0-b1ad-1e8df67bedd2); [independent repeat](https://app.buildbuddy.io/invocation/4d77dfd1-de3f-471f-9f05-dcfcd0815b8a) |
+
+Each release returned OK and exit 0 for both `network=off` alone and combined
+with `dockerNetwork=host`, but exposed `eth0` and a default route. Both subcases
+failed at `network_bug_test.go:23`, the intended network-isolation assertion.
+The April release reproduced in two independent fresh fixtures. The linked
+runner log contains separate `VERSION` markers and full Bazel test output for
+each release. The script continues after expected test failures, so its outer
+exit code is not a passing-test verdict.
+
+**Earliest tested reproducing release: v2.258.0 (2026-04-09).** The defect
+was present at or before that release; its actual introduction is unknown.
+No earlier release or known-good boundary was tested. The
+[v2.258.0 platform documentation](https://github.com/buildbuddy-io/buildbuddy/blob/v2.258.0/docs/rbe-platforms.md#L361)
+already documents `network=off` as localhost-only and says `dockerNetwork` has
+no effect when `network` is supplied. This is not an unsupported new property
+on the older release.
+
+### Runner configuration and excluded attempts
+
+No release-specific component configuration changes were needed. This area's
+private dockerd disables iptables setup; reused runners can retain forwarding
+rules from earlier daemons. Initial attempts stopped before actions ran:
+
+- v2.314.0: local app readiness failed because it could not reach fixture-local Redis; [excluded invocation](https://app.buildbuddy.io/invocation/dafc0a44-2a95-4531-a721-7f0f54a15c58).
+- v2.313.0: Docker Hub rate limit pulling the fixture Redis image; [excluded invocation](https://app.buildbuddy.io/invocation/b7ac0c34-f0fc-4cb3-ab5b-1ed5083ba61c).
+- v2.290.0: local app readiness failed because it could not reach fixture-local Redis; [excluded invocation](https://app.buildbuddy.io/invocation/fee68726-90fc-455c-8f67-a2bfa1e497ea).
+- v2.275.0: local app readiness failed because it could not reach fixture-local Redis; [excluded invocation](https://app.buildbuddy.io/invocation/e89a7146-174c-4c03-8fe8-29d2344e6779).
+- v2.258.0: local app readiness failed because it could not reach fixture-local Redis; [excluded invocation](https://app.buildbuddy.io/invocation/391b4571-a800-4951-9e9f-163e7caae95d).
+- Fresh-runner v2.314.0 retry: Redis pull rate limit; [excluded invocation](https://app.buildbuddy.io/invocation/6a1960e7-96cc-4fc6-9c4a-566f7123ce87).
+
+These are fixture/environment failures, not reproductions or fixed-version
+results. To obtain the matrix above without editing tests or harness, a fresh
+disposable runner was configured with Google's Docker Hub mirror and bridge
+forwarding enabled. The configuration applies to all five releases:
+
+```sh
+sudo mkdir -p /etc/docker
+printf '%s\n' '{"registry-mirrors":["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+sudo iptables -P FORWARD ACCEPT
+```
+
+This setup and the following Bazel command template ran inside
+`GIT_CONFIG_GLOBAL=/dev/null bb remote --runner_exec_properties=recycle-runner=false --script=...`,
+never on the worker VM. The existing Docker Hub image references resolve via
+the mirror; BuildBuddy app/executor references remain pinned to GCR digests.
+No environment override or dispatch credential was forwarded into the tests.
+
+```sh
+bazel test //tests/executor/isolation-docker:network_off_bug \
+  --test_tag_filters=bug --nocache_test_results --test_output=all \
+  --test_arg=-harness.app_image=gcr.io/flame-public/buildbuddy-app-enterprise@<app-digest> \
+  --test_arg=-harness.executor_image=gcr.io/flame-public/buildbuddy-executor-enterprise@<executor-digest>
+```
+
+Allowing forwarding does not create `eth0` in a correctly isolated Docker
+`none` network. The failure remains the presence of the configured bridge
+interface and route, not a claim about internet connectivity. The existing
+finding's independent controls and current-release verification remain intact.
+
+### Exact release pins
+
+Both components were overridden together. These linux/amd64 manifest digests
+were resolved from the GCR registry API, and the fixture logs identify the
+requested digest references. App repository:
+`gcr.io/flame-public/buildbuddy-app-enterprise`; executor repository:
+`gcr.io/flame-public/buildbuddy-executor-enterprise`.
+
+| Enterprise release | App digest | Executor digest |
+| --- | --- | --- |
+| v2.314.0 | `sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` | `sha256:7d178c9ae49b0749dc0b509c471c1477ed548c8330441d37fed3b5a68ab364b8` |
+| v2.313.0 | `sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` | `sha256:8f7c2662f5fcd0ab888113f6d36d31cde8b8ea254434a8177cf6996b01155afe` |
+| v2.290.0 | `sha256:f3b285107f28da495e9496dd848857ce0cf6cddbf3fac8743b259c2a7a8678b6` | `sha256:2c65048231e21ecf0c60623bc5f8ccaf494e82828077c5064aa994909e15607a` |
+| v2.275.0 | `sha256:75ffd43cf6dc14ccf5a652b760d7e4d7390dfa7870524c57e7f354f271e96db1` | `sha256:d2dbe25032467449c80e9eb18002d56b57bcf5247cba267ab886022415b30956` |
+| v2.258.0 | `sha256:f7b499d817581e58c1fe826c6441a7773519488d4500dc6ffafad387d2c990c4` | `sha256:500703561ba144c64b12a36f0d3350422f09efe693b8e24592414958ea6753cd` |
