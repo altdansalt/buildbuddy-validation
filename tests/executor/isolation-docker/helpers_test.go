@@ -114,6 +114,9 @@ func providerFixture(t *testing.T, provider string) *harness.Fixture {
 		opts.Args = map[harness.Component][]string{harness.Executor: {"--executor.enable_" + provider + "=true", "--executor.container_registry_allowed_private_ips=127.0.0.0/8"}}
 		opts.DockerArgs[harness.Executor] = append(opts.DockerArgs[harness.Executor], "--privileged", "--cgroupns=host", "--volume", "/sys/fs/cgroup:/sys/fs/cgroup:rw")
 		if provider == "podman" {
+			// Podman resolves action bind sources inside the executor container,
+			// unlike Docker's host daemon. Expose the same source at the same path.
+			opts.DockerArgs[harness.Executor] = append(opts.DockerArgs[harness.Executor], "--volume", extra+":"+extra+":ro")
 			opts.Args[harness.Executor] = append(opts.Args[harness.Executor], "--executor.podman.storage_driver=vfs", "--executor.podman.enable_stats=false")
 		} else {
 			opts.Args[harness.Executor] = append(opts.Args[harness.Executor], "--executor.oci.default_network_mode=off")
