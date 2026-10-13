@@ -2,6 +2,7 @@ package gettree
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -38,6 +39,33 @@ func TestEmptyDirectories(t *testing.T) {
 		})
 	}
 }
+
+// GetTree may end a stream with a token and require another RPC. Assemble
+// those streams before comparing token resumes against the complete suffix.
+func readAllPages(t *testing.T, ctx context.Context, c *harness.Clients, req *repb.GetTreeRequest) ([]*repb.GetTreeResponse, error) {
+	t.Helper()
+	req = proto.Clone(req).(*repb.GetTreeRequest)
+	seen := map[string]bool{}
+	var all []*repb.GetTreeResponse
+	for round := 0; round < 1024; round++ {
+		pages, err := read(t, ctx, c, req)
+		if err != nil {
+			return all, err
+		}
+		all = append(all, pages...)
+		if len(pages) == 0 || pages[len(pages)-1].NextPageToken == "" {
+			return all, nil
+		}
+		token := pages[len(pages)-1].NextPageToken
+		if seen[token] {
+			return all, fmt.Errorf("pagination failed to advance: repeated token %q", token)
+		}
+		seen[token] = true
+		req.PageToken = token
+	}
+	return all, fmt.Errorf("pagination exceeded bounded request count")
+}
+
 func TestPageSize(t *testing.T) {
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -50,7 +78,7 @@ func TestPageSize(t *testing.T) {
 			tr.root = tr.add(t, &repb.Directory{Directories: []*repb.DirectoryNode{{Name: "child", Digest: leaf}}})
 			upload(t, ctx, c, tr, "pages")
 			req := &repb.GetTreeRequest{InstanceName: "pages", RootDigest: tr.root, PageSize: 1}
-			pages, err := read(t, ctx, c, req)
+			pages, err := readAllPages(t, ctx, c, req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -66,7 +94,7 @@ func TestPageSize(t *testing.T) {
 					continue
 				}
 				req.PageToken = p.NextPageToken
-				suffix, err := read(t, ctx, c, req)
+				suffix, err := readAllPages(t, ctx, c, req)
 				if err != nil {
 					t.Fatal(err)
 				}
