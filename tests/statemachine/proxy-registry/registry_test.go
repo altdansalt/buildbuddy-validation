@@ -1,10 +1,13 @@
 package registry_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -19,9 +22,12 @@ import (
 )
 
 type rig struct {
+	wire           string
 	otherGroup     string
 	expectedWrites string
 	otherConn      *grpc.ClientConn
+	secondConn     *grpc.ClientConn
+	secondReader   bool
 	t              *testing.T
 	f              *harness.Fixture
 	conn           *grpc.ClientConn
@@ -58,12 +64,18 @@ func (r *rig) read(method string, extra map[string]any, web bool) (map[string]an
 		req[k] = v
 	}
 	if web {
-		return r.f.Web.RPC(method, req)
+		if r.wire == "" {
+			return r.f.Web.RPC(method, req)
+		}
+		return r.httpRead(method, req)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	out := r.msg(method+"Response", nil)
 	conn := r.conn
+	if r.secondReader {
+		conn = r.secondConn
+	}
 	if rc, ok := req["requestContext"].(map[string]any); ok && rc["groupId"] == r.otherGroup {
 		conn = r.otherConn
 	}
@@ -73,6 +85,86 @@ func (r *rig) read(method string, extra map[string]any, web bool) (map[string]an
 	}
 	return decode(r.t, out), nil
 }
+
+// httpRead exercises the binary transports used by rpc_service.ts, using
+// the same fixture-local cookie session as the JSON UI helper.
+func (r *rig) httpRead(method string, req map[string]any) (map[string]any, error) {
+	b, err := r.msg(method+"Request", req).Marshal()
+	if err != nil {
+		return nil, err
+	}
+	if r.wire == "application/proto+prefixed" {
+		frame := make([]byte, 5+len(b))
+		binary.BigEndian.PutUint32(frame[1:5], uint32(len(b)))
+		copy(frame[5:], b)
+		b = frame
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, "POST", r.f.Web.URL+"/rpc/BuildBuddyService/"+method, bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", r.wire)
+	response, err := r.f.Web.Client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	b, err = io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s %s HTTP %d: %s", method, r.wire, response.StatusCode, b)
+	}
+	if r.wire == "application/proto+prefixed" {
+		var message []byte
+		count := 0
+		for len(b) > 0 {
+			if len(b) < 5 {
+				return nil, fmt.Errorf("short frame")
+			}
+			n := int(binary.BigEndian.Uint32(b[1:5]))
+			flag := b[0]
+			b = b[5:]
+			if n > len(b) {
+				return nil, fmt.Errorf("short payload")
+			}
+			if flag == 0 {
+				message = b[:n]
+				count++
+			} else if flag == 128 {
+				if !strings.Contains(strings.ToLower(string(b[:n])), "grpc-status: 0") {
+					return nil, fmt.Errorf("RPC trailers: %s", b[:n])
+				}
+			} else {
+				return nil, fmt.Errorf("unexpected frame flag %d", flag)
+			}
+			b = b[n:]
+		}
+		if count != 1 {
+			return nil, fmt.Errorf("got %d unary frames", count)
+		}
+		b = message
+	}
+	out := r.msg(method+"Response", nil)
+	if err := out.Unmarshal(b); err != nil {
+		return nil, err
+	}
+	return decode(r.t, out), nil
+}
+func (r *rig) transport(mode int) bool {
+	r.secondReader = mode == 2
+	r.wire = ""
+	if mode == 3 {
+		r.wire = "application/proto"
+	}
+	if mode == 4 {
+		r.wire = "application/proto+prefixed"
+	}
+	return mode == 1 || mode >= 3
+}
 func poll(t *testing.T, timeout time.Duration, check func() error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -80,9 +172,21 @@ func poll(t *testing.T, timeout time.Duration, check func() error) {
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
 	var last error
+	started := time.Now()
+	stable := 0
+	var converged time.Duration
 	for {
 		if last = check(); last == nil {
-			return
+			if stable == 0 {
+				converged = time.Since(started)
+			}
+			stable++
+			if stable == 3 {
+				t.Logf("converged in %s; stable across three observations", converged)
+				return
+			}
+		} else {
+			stable = 0
 		}
 		select {
 		case <-ctx.Done():
@@ -108,7 +212,8 @@ func summaries(v map[string]any, method string) []map[string]any {
 }
 func array(v any) []any { a, _ := v.([]any); return a }
 func (r *rig) visible(id string, model map[string]any, present bool) error {
-	for _, web := range []bool{false, true} {
+	for _, mode := range []int{0, 1, 2, 3, 4} {
+		web := r.transport(mode)
 		for _, method := range []string{"GetCacheProxies", "ListCacheProxies"} {
 			other, err := r.read(method, map[string]any{"requestContext": r.f.Web.RequestContext(r.otherGroup)}, web)
 			if err != nil {
@@ -149,6 +254,7 @@ func (r *rig) visible(id string, model map[string]any, present bool) error {
 			}
 		}
 	}
+	r.transport(0)
 	return nil
 }
 func TestRegistryStateMachine(t *testing.T) {
@@ -159,6 +265,7 @@ func TestRegistryStateMachine(t *testing.T) {
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}})
 	key := f.Web.CreateAPIKey(t, f.GroupID, "registry", []string{"REGISTER_CACHE_PROXY", "CACHE_WRITE", "ORG_ADMIN"})
 	r := &rig{otherGroup: f.Web.CreateGroup(t, "registry-other"), t: t, f: f, conn: harness.Dial(t, f.Endpoint(harness.App).GRPC, key).Conn, fd: files[0]}
+	r.secondConn = harness.Dial(t, f.Endpoint(harness.App).GRPC, f.Web.CreateAPIKey(t, f.GroupID, "registry-second", []string{"REGISTER_CACHE_PROXY", "ORG_ADMIN"})).Conn
 	// Use the app's unique container name to avoid alias ambiguity across networks.
 	r.otherConn = harness.Dial(t, f.Endpoint(harness.App).GRPC, f.Web.CreateAPIKey(t, r.otherGroup, "other-reader", []string{"ORG_ADMIN"})).Conn
 	target := "grpc://" + f.Endpoint(harness.App).Container + ":1985"
@@ -181,7 +288,8 @@ func TestRegistryStateMachine(t *testing.T) {
 		return r.visible(realID, map[string]any{"osFamily": "linux", "arch": "amd64", "labels": map[string]any{"conformance": "registry"}}, true)
 	})
 	poll(t, time.Minute, func() error { return r.visible(realID, realModel, true) })
-	for _, web := range []bool{false, true} {
+	for _, mode := range []int{0, 1, 2, 3, 4} {
+		web := r.transport(mode)
 		v, e := r.read("GetCacheProxy", map[string]any{"selector": map[string]any{"proxyId": realID}, "includeConfiguredFlags": true, "includeStatistics": true}, web)
 		if e != nil {
 			t.Fatal(e)
@@ -212,7 +320,8 @@ func TestRegistryStateMachine(t *testing.T) {
 	}
 	trafficCancel()
 	poll(t, time.Minute, func() error {
-		for _, web := range []bool{false, true} {
+		for _, mode := range []int{0, 1, 2, 3, 4} {
+			web := r.transport(mode)
 			v, e := r.read("GetCacheProxy", map[string]any{"selector": map[string]any{"proxyId": realID}, "includeStatistics": true}, web)
 			if e != nil {
 				return e
@@ -225,11 +334,18 @@ func TestRegistryStateMachine(t *testing.T) {
 			if e != nil {
 				return e
 			}
+			found := false
 			for _, entry := range array(old["cacheProxy"]) {
 				m := entry.(map[string]any)
+				if m["summary"].(map[string]any)["proxyId"] == realID {
+					found = true
+				}
 				if m["summary"].(map[string]any)["proxyId"] == realID && !reflect.DeepEqual(m["statistics"], stats) {
 					return fmt.Errorf("heartbeat/detail statistics differ: %v / %v", m["statistics"], stats)
 				}
+			}
+			if !found {
+				return fmt.Errorf("live proxy missing from legacy statistics view")
 			}
 		}
 		return nil
@@ -242,12 +358,16 @@ func TestRegistryStateMachine(t *testing.T) {
 	}
 	stopCancel()
 	poll(t, time.Minute, func() error { return r.visible(realID, nil, false) })
-	for _, web := range []bool{false, true} {
+	for _, mode := range []int{0, 1, 2, 3, 4} {
+		web := r.transport(mode)
 		if _, err := r.read("GetCacheProxy", map[string]any{"selector": map[string]any{"proxyId": realID}}, web); err == nil {
 			t.Fatal("stopped real proxy still serves details")
 		}
 	}
-	for _, expiry := range []bool{false, true} {
+	for cycle, expiry := range []bool{false, false, true} {
+		if cycle == 1 {
+			r.conn, r.secondConn = r.secondConn, r.conn
+		}
 		id := fmt.Sprintf("conformance-%v", expiry)
 		model := map[string]any{"proxyId": id, "host": "registry-test", "osFamily": "linux", "arch": "amd64", "version": "v2.314.0", "configuredFlags": []any{"--cache_proxy.proxy_type=customer"}}
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
@@ -263,48 +383,72 @@ func TestRegistryStateMachine(t *testing.T) {
 			}
 		}
 		r.expectedWrites = "7"
-		for step := 0; step < 3; step++ {
-			if step == 2 {
-				model["host"] = "registry-updated"
-				r.expectedWrites = "9"
+		for step := 0; step < 4; step++ {
+			if step >= 2 {
+				model["host"] = fmt.Sprintf("registry-updated-%d", step)
+				r.expectedWrites = fmt.Sprint(7 + step)
 			}
 			send(map[string]any{"summary": model, "statistics": map[string]any{"casWrites": r.expectedWrites}})
 			poll(t, time.Minute, func() error { return r.visible(id, model, true) })
 			// Answer each UI/gRPC detail request through the actual bidirectional stream.
-			for _, web := range []bool{false, true} {
-				done := make(chan error, 1)
-				go func() {
-					v, e := r.read("GetCacheProxy", map[string]any{"selector": map[string]any{"proxyId": id}, "includeStatistics": true, "includeConfiguredFlags": true}, web)
-					if e == nil {
-						d := v["details"].(map[string]any)
-						s := d["summary"].(map[string]any)
-						for k, w := range model {
-							if !reflect.DeepEqual(s[k], w) {
-								e = fmt.Errorf("details %s: %v", k, s)
+			for _, mode := range []int{0, 1, 2, 3, 4} {
+				web := r.transport(mode)
+				for _, options := range []int{0, 1, 2, 3} {
+					flags, stats := options&1 != 0, options&2 != 0
+					done := make(chan error, 1)
+					go func() {
+						v, e := r.read("GetCacheProxy", map[string]any{"selector": map[string]any{"proxyId": id}, "includeStatistics": stats, "includeConfiguredFlags": flags}, web)
+						if e == nil {
+							d := v["details"].(map[string]any)
+							s := d["summary"].(map[string]any)
+							for k, w := range model {
+								if !reflect.DeepEqual(s[k], w) {
+									e = fmt.Errorf("details %s: %v", k, s)
+								}
+							}
+							var wantFlags any
+							if flags {
+								wantFlags = []any{"--cache_proxy.proxy_type=customer"}
+							}
+							if !reflect.DeepEqual(d["configuredFlags"], wantFlags) {
+								e = fmt.Errorf("configured flags: %v", d)
+							}
+							var wantStats any
+							if stats {
+								wantStats = map[string]any{"casWrites": r.expectedWrites}
+							}
+							if !reflect.DeepEqual(d["statistics"], wantStats) {
+								e = fmt.Errorf("statistics: %v", d)
 							}
 						}
-						if !reflect.DeepEqual(d["configuredFlags"], []any{"--cache_proxy.proxy_type=customer"}) {
-							e = fmt.Errorf("configured flags: %v", d)
-						}
-						if !reflect.DeepEqual(d["statistics"], map[string]any{"casWrites": r.expectedWrites}) {
-							e = fmt.Errorf("statistics: %v", d)
-						}
+						done <- e
+					}()
+					rsp := r.msg("RegisterCacheProxyResponse", nil)
+					if e := stream.RecvMsg(rsp); e != nil {
+						t.Fatal(e)
 					}
-					done <- e
-				}()
-				rsp := r.msg("RegisterCacheProxyResponse", nil)
-				if e := stream.RecvMsg(rsp); e != nil {
-					t.Fatal(e)
-				}
-				v := decode(t, rsp)
-				if v["requestId"] == nil {
-					t.Fatal("missing request correlation")
-				}
-				send(map[string]any{"summary": model, "statistics": map[string]any{"casWrites": r.expectedWrites}, "details": map[string]any{"summary": model, "statistics": map[string]any{"casWrites": r.expectedWrites}, "configuredFlags": []string{"--cache_proxy.proxy_type=customer"}}, "requestId": v["requestId"]})
-				if e := <-done; e != nil {
-					t.Fatal(e)
+					v := decode(t, rsp)
+					if v["requestId"] == nil {
+						t.Fatal("missing request correlation")
+					}
+					details := map[string]any{"summary": model}
+					if flags {
+						details["configuredFlags"] = []string{"--cache_proxy.proxy_type=customer"}
+					}
+					if stats {
+						details["statistics"] = map[string]any{"casWrites": r.expectedWrites}
+					}
+					request := v["detailsRequest"].(map[string]any)
+					if (request["includeStatistics"] == true) != stats || (request["includeConfiguredFlags"] == true) != flags {
+						t.Fatalf("stream options differ: %v", request)
+					}
+					send(map[string]any{"summary": model, "statistics": map[string]any{"casWrites": r.expectedWrites}, "details": details, "requestId": v["requestId"]})
+					if e := <-done; e != nil {
+						t.Fatal(e)
+					}
 				}
 			}
+			poll(t, time.Minute, func() error { return r.visible(id, model, true) })
 		}
 		if !expiry {
 			send(map[string]any{"summary": model, "shuttingDown": true})
@@ -315,7 +459,8 @@ func TestRegistryStateMachine(t *testing.T) {
 		if e := stream.RecvMsg(r.msg("RegisterCacheProxyResponse", nil)); e != io.EOF {
 			t.Fatalf("closure: %v", e)
 		}
-		for _, web := range []bool{false, true} {
+		for _, mode := range []int{0, 1, 2, 3, 4} {
+			web := r.transport(mode)
 			if _, e := r.read("GetCacheProxy", map[string]any{"selector": map[string]any{"proxyId": id}}, web); e == nil {
 				t.Fatal("closed stream served details")
 			}
@@ -338,7 +483,8 @@ func TestRegistryStateMachine(t *testing.T) {
 			}
 			return err
 		})
-		for _, web := range []bool{false, true} {
+		for _, mode := range []int{0, 1, 2, 3, 4} {
+			web := r.transport(mode)
 			if _, e := r.read("GetCacheProxy", map[string]any{"selector": map[string]any{"proxyId": id}}, web); e == nil {
 				t.Fatalf("closed stream still serves details HTTP=%v", web)
 			}

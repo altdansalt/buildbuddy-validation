@@ -39,3 +39,13 @@ its list views remain empty after each transition. Fixture artifacts preserve im
 
 - app enterprise-v2.314.0: `gcr.io/flame-public/buildbuddy-app-enterprise@sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843`
 - proxy enterprise-v2.314.0: `gcr.io/flame-public/buildbuddy-proxy-enterprise@sha256:dcfd8fae2d63a5dc9b05e26d30e07817a638445d9ebac504963515fcfd47c906`
+
+## Round 2
+
+See [AUDIT.md](AUDIT.md) for the source inventory and assertion audit. Reads now
+also cover the frontend's binary protobuf and framed protobuf HTTP transports,
+a second API key in the same organization, and all four configured-flags /
+statistics detail option combinations. Synthetic sessions perform two distinct
+updates, graceful deletion, and re-registration under the second key. Polls log
+first convergence latency and require three consecutive matching observations.
+The live legacy-statistics oracle explicitly requires the proxy entry to exist.
