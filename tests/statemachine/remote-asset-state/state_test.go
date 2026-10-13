@@ -188,6 +188,7 @@ func TestFetchBlobStateMachine(t *testing.T) {
 						missing, err := clients[harness.App].CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{InstanceName: instance, BlobDigests: []*repb.Digest{d}})
 						require.NoError(t, err)
 						require.Len(t, missing.MissingBlobDigests, 1)
+						checkProxyFileReaders(t, ctx, f, clients[harness.App], d, data)
 					}
 				}
 			}
@@ -307,4 +308,48 @@ func fixtureGateway(t *testing.T, f *harness.Fixture) string {
 	}
 	t.Fatal("cannot read fixture bridge gateway")
 	return ""
+}
+
+// The app's full-file readers can address a proxy URI even though its metadata
+// and GetFileRange APIs read only the app cache. This exercises that distinction.
+func checkProxyFileReaders(t *testing.T, ctx context.Context, f *harness.Fixture, c *harness.Clients, d *repb.Digest, want []byte) {
+	t.Helper()
+	uri := "bytestream://cacheproxy:1985/" + harness.ResourceName("", d, false)
+	req := bytesField(1, []byte(uri))
+	stream, err := c.Conn.NewStream(ctx, &grpc.StreamDesc{ServerStreams: true}, "/api.v1.ApiService/GetFile", grpc.ForceCodec(wireCodec{}))
+	require.NoError(t, err)
+	require.NoError(t, stream.SendMsg(&req))
+	require.NoError(t, stream.CloseSend())
+	var all []byte
+	for {
+		var msg []byte
+		err := stream.RecvMsg(&msg)
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		b, _ := field(msg, 1)
+		all = append(all, b...)
+	}
+	require.Equal(t, want, all)
+	for _, path := range []string{"/file/download?bytestream_url=" + url.QueryEscape(uri), "/api/v1/GetFile"} {
+		method := "GET"
+		var body io.Reader
+		if path == "/api/v1/GetFile" {
+			method = "POST"
+			b, _ := json.Marshal(map[string]any{"uri": uri})
+			body = bytes.NewReader(b)
+		}
+		r, err := http.NewRequestWithContext(ctx, method, f.Web.URL+path, body)
+		require.NoError(t, err)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("x-buildbuddy-api-key", f.APIKey)
+		res, err := f.Web.Client.Do(r)
+		require.NoError(t, err)
+		b, err := io.ReadAll(res.Body)
+		res.Body.Close()
+		require.NoError(t, err)
+		require.Equal(t, 200, res.StatusCode, "%s", b)
+		require.Equal(t, want, b)
+	}
 }
