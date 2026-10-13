@@ -80,6 +80,8 @@ func runRemovedMemberHTTPDownload(t *testing.T, noAnonymous bool) {
 	if status.Code(grpcErr) != codes.Unauthenticated && status.Code(grpcErr) != codes.PermissionDenied {
 		t.Fatalf("gRPC read by removed member: %v", grpcErr)
 	}
+	_, anonErr := harness.Dial(t, f.Endpoint(harness.App).GRPC, "").Read(ctx, "", d)
+	t.Logf("control: unauthenticated gRPC read of the same blob: %v", anonErr)
 	for name, k := range map[string]string{"removed key": key, "bogus key": "bogus-key-0123456789ab", "no credentials": ""} {
 		code, body, err := httpDownload(ctx, base, k, rn)
 		t.Logf("%s: HTTP %d %q err=%v (gRPC removed-key read: %v)", name, code, body, err, grpcErr)
@@ -98,6 +100,6 @@ func runRemovedMemberHTTPDownload(t *testing.T, noAnonymous bool) {
 		time.Sleep(time.Second)
 	}
 	if code == 200 {
-		t.Fatalf("removed member still downloads the blob over HTTP after 45s: %q (image %s)", body, f.Endpoint(harness.App).Image)
+		t.Fatalf("(anonymous usage disabled=%v) "removed member still downloads the blob over HTTP after 45s: %q (image %s)", noAnonymous, body, f.Endpoint(harness.App).Image)
 	}
 }
