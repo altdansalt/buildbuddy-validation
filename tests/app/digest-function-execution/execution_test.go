@@ -123,9 +123,12 @@ func execute(ctx context.Context, c *harness.Clients, df repb.DigestFunction_Val
 	}
 }
 func action(t *testing.T, ctx context.Context, proxy *harness.Clients, df repb.DigestFunction_Value, payload []byte, salt int64) *repb.Digest {
+	return actionCommand(t, ctx, proxy, df, payload, salt, "mkdir -p tree/sub; cat in > out; cat in > tree/sub/copy; printf 'stdout'; printf 'stderr' >&2", []string{"out", "tree"})
+}
+func actionCommand(t *testing.T, ctx context.Context, proxy *harness.Clients, df repb.DigestFunction_Value, payload []byte, salt int64, script string, paths []string) *repb.Digest {
 	input := upload(t, ctx, proxy, df, payload)
 	root := uploadProto(t, ctx, proxy, df, &repb.Directory{Files: []*repb.FileNode{{Name: "in", Digest: input}}})
-	cmd := uploadProto(t, ctx, proxy, df, &repb.Command{Arguments: []string{"/bin/sh", "-c", "mkdir -p tree/sub; cat in > out; cat in > tree/sub/copy; printf 'stdout'; printf 'stderr' >&2"}, OutputPaths: []string{"out", "tree"}, EnvironmentVariables: []*repb.Command_EnvironmentVariable{{Name: "CASE_SALT", Value: fmt.Sprint(salt)}}, Platform: &repb.Platform{Properties: []*repb.Platform_Property{{Name: "Arch", Value: "amd64"}, {Name: "OSFamily", Value: "linux"}, {Name: "workload-isolation-type", Value: "none"}}}})
+	cmd := uploadProto(t, ctx, proxy, df, &repb.Command{Arguments: []string{"/bin/sh", "-c", script}, OutputPaths: paths, EnvironmentVariables: []*repb.Command_EnvironmentVariable{{Name: "CASE_SALT", Value: fmt.Sprint(salt)}}, Platform: &repb.Platform{Properties: []*repb.Platform_Property{{Name: "Arch", Value: "amd64"}, {Name: "OSFamily", Value: "linux"}, {Name: "workload-isolation-type", Value: "none"}}}})
 	return uploadProto(t, ctx, proxy, df, &repb.Action{CommandDigest: cmd, InputRootDigest: root, Timeout: durationpb.New(20 * time.Second)})
 }
 func checkResult(t *testing.T, ctx context.Context, proxy *harness.Clients, df repb.DigestFunction_Value, r *repb.ActionResult, payload []byte) {
@@ -167,6 +170,9 @@ func checkResult(t *testing.T, ctx context.Context, proxy *harness.Clients, df r
 
 // Register before Start, so this runs after the harness preserves logs.
 func start(t *testing.T) *harness.Fixture {
+	return startWithConfig(t, nil)
+}
+func startWithConfig(t *testing.T, config map[harness.Component]harness.Config) *harness.Fixture {
 	var f *harness.Fixture
 	t.Cleanup(func() {
 		if f == nil {
@@ -179,7 +185,7 @@ func start(t *testing.T) *harness.Fixture {
 			require.False(t, strings.Contains(string(b), "panic:") || strings.Contains(string(b), "fatal error:"), "seed=%d component=%s panic in preserved log %s", *seed, component, path)
 		}
 	})
-	f = harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor, harness.CacheProxy}})
+	f = harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor, harness.CacheProxy}, Config: config})
 	return f
 }
 func TestDigestExecutionProperties(t *testing.T) {
