@@ -38,9 +38,11 @@ func checkCacheWrites(t *testing.T, member *identity, oracle *harness.Clients, m
 		if casErr != nil || acErr != nil {
 			t.Fatalf("cache %d writes CAS=%v AC=%v", i, casErr, acErr)
 		}
+		eff := effectiveCaps(member.storedCaps, m.role)
+		canCAS, canAC := eff&5 != 0, eff&1 != 0
 		// Read-only writes deliberately report OK but must not change stored state.
 		_, readErr := oracle.Read(ctx, "", d)
-		if m.role == 8 {
+		if !canCAS {
 			if status.Code(readErr) != codes.NotFound {
 				t.Fatalf("reader CAS write changed app state: %v", readErr)
 			}
@@ -48,7 +50,7 @@ func checkCacheWrites(t *testing.T, member *identity, oracle *harness.Clients, m
 			t.Fatalf("CAS write not observable via app: %v", readErr)
 		}
 		ac, readErr := oracle.AC.GetActionResult(ctx, &repb.GetActionResultRequest{ActionDigest: d})
-		if m.role == 1 || m.role == 8 {
+		if !canAC {
 			if status.Code(readErr) != codes.NotFound {
 				t.Fatalf("readonly AC write changed app state: %v", readErr)
 			}
@@ -57,7 +59,7 @@ func checkCacheWrites(t *testing.T, member *identity, oracle *harness.Clients, m
 		}
 		for j, reader := range member.cacheClients {
 			data, e := reader.Read(ctx, "", d)
-			if m.role == 8 {
+			if !canCAS {
 				if status.Code(e) != codes.NotFound {
 					t.Fatalf("reader CAS write changed cache %d: %v", j, e)
 				}
@@ -65,7 +67,7 @@ func checkCacheWrites(t *testing.T, member *identity, oracle *harness.Clients, m
 				t.Fatalf("CAS write not observable via cache %d: %v", j, e)
 			}
 			ac, e := reader.AC.GetActionResult(ctx, &repb.GetActionResultRequest{ActionDigest: d})
-			if m.role == 1 || m.role == 8 {
+			if !canAC {
 				if status.Code(e) != codes.NotFound {
 					t.Fatalf("readonly AC write changed cache %d: %v", j, e)
 				}

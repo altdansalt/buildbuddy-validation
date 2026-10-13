@@ -24,6 +24,7 @@ type identity struct {
 	uid, home, key, manageKey string
 	profile                   map[string]any
 	targetKey, targetID       string
+	storedCaps                int
 	cacheClients              []*harness.Clients
 }
 
@@ -478,6 +479,7 @@ func TestMembershipStateMachine(t *testing.T) {
 		{name: "direct-add", action: 1, role: 4, want: model{1, 4}},
 		{name: "final-remove", action: 2, want: model{}},
 	}
+	outer := t
 	for _, s := range steps {
 		t.Run(s.name, func(t *testing.T) {
 			var err error
@@ -505,12 +507,22 @@ func TestMembershipStateMachine(t *testing.T) {
 			} else if err != nil {
 				t.Fatal(err)
 			}
+			if s.role != 0 && member.targetKey != "" {
+				prev := state.role
+				if state.status == 0 {
+					prev = 1 // a fresh ADD creates the membership as developer first
+				}
+				if s.role != prev {
+					member.storedCaps = storedAfterRoleChange(member.storedCaps, s.role)
+				}
+			}
 			state = s.want
 			if s.name == "approve" {
+				member.storedCaps = 1 | 4
 				k := object(mustHTTP(t, admin.web, "CreateUserApiKey", map[string]any{"requestContext": admin.web.RequestContext(gid), "userId": member.uid, "label": "sequence key", "capability": []string{"CACHE_WRITE", "CAS_WRITE"}})["apiKey"])
 				member.targetKey = stringValue(k["value"])
 				member.targetID = stringValue(k["id"])
-				member.cacheClients = []*harness.Clients{harness.Dial(t, f.Endpoint(harness.App).GRPC, member.targetKey), harness.Dial(t, f.Endpoint(harness.CacheProxy).GRPC, member.targetKey)}
+				member.cacheClients = []*harness.Clients{harness.Dial(outer, f.Endpoint(harness.App).GRPC, member.targetKey), harness.Dial(outer, f.Endpoint(harness.CacheProxy).GRPC, member.targetKey)}
 			}
 			check(t, conn, admin, member, gid, state)
 			checkCLI(t, cli, f.Endpoint(harness.App).GRPC, member, state)

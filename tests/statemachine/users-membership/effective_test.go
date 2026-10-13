@@ -20,6 +20,28 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// Role capability masks from server/util/role/role.go (user-key bits only).
+var roleMask = map[int]int{1: 4, 2: 1 | 4 | 8, 4: 1 | 4, 8: 0}
+
+// storedAfterRoleChange mirrors userdb.updateUserRole: the stored key mask only
+// ever shrinks; a later role upgrade does not restore dropped capabilities.
+func storedAfterRoleChange(stored, newRole int) int {
+	return (stored | ((stored & 1) << 2)) & roleMask[newRole]
+}
+
+// effectiveCaps mirrors the read-time membership mask in authdb: CACHE_WRITE
+// implies CAS_WRITE, the role mask applies, and CACHE_WRITE displaces CAS_WRITE.
+func effectiveCaps(stored, role int) int {
+	if stored&1 != 0 {
+		stored |= 4
+	}
+	stored &= roleMask[role]
+	if stored&1 != 0 {
+		stored ^= 4
+	}
+	return stored
+}
+
 func observeTargetKey(conn *grpc.ClientConn, admin, member *identity, gid string, m model) error {
 	h, he := admin.web.RPC("GetUserApiKeys", map[string]any{"requestContext": admin.web.RequestContext(gid), "userId": member.uid})
 	g, ge := rpc(conn, admin.manageKey, "GetUserApiKeys", join(bytesField(1, requestContext(admin.uid, gid)), text(3, member.uid)))
@@ -43,13 +65,14 @@ func observeTargetKey(conn *grpc.ClientConn, admin, member *identity, gid string
 			return fmt.Errorf("target key identity mismatch")
 		}
 		// A key requests CACHE_WRITE and CAS_WRITE; membership masks that set.
+		eff := effectiveCaps(member.storedCaps, m.role)
 		want := map[string]bool{}
 		wantWire := map[byte]bool{}
-		if m.role != 8 {
+		if eff&4 != 0 {
 			want["CAS_WRITE"] = true
 			wantWire[4] = true
 		}
-		if m.role == 2 || m.role == 4 {
+		if eff&1 != 0 {
 			want["CACHE_WRITE"] = true
 			wantWire[1] = true
 		}
@@ -101,11 +124,12 @@ func observeTargetKey(conn *grpc.ClientConn, admin, member *identity, gid string
 		if err = json.Unmarshal(b, &claims); err != nil {
 			return err
 		}
+		eff := effectiveCaps(member.storedCaps, m.role)
 		wantCaps := map[float64]bool{}
-		if m.role != 8 {
+		if eff&4 != 0 {
 			wantCaps[4] = true
 		}
-		if m.role == 2 || m.role == 4 {
+		if eff&1 != 0 {
 			wantCaps[1] = true
 		}
 		gotCaps := map[float64]bool{}
@@ -131,7 +155,7 @@ func observeTargetKey(conn *grpc.ClientConn, admin, member *identity, gid string
 			if ce != nil {
 				return ce
 			}
-			wantWrite := m.role == 2 || m.role == 4
+			wantWrite := effectiveCaps(member.storedCaps, m.role)&1 != 0
 			if caps.GetCacheCapabilities().GetActionCacheUpdateCapabilities().GetUpdateEnabled() != wantWrite {
 				return fmt.Errorf("cache %d advertised AC write capability did not converge", i)
 			}
