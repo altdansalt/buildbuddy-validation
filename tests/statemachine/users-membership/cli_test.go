@@ -58,7 +58,7 @@ func checkCLI(t *testing.T, binary, target string, id *identity, m model) {
 	const driver = `import os,pty,select,sys,time,fcntl,termios,struct
 pid,fd=pty.fork()
 if pid==0:
- os.execv(sys.argv[1],[sys.argv[1],"ui","--target="+sys.argv[2]])
+ os.execv(sys.argv[1],[sys.argv[1],"ui","--target=grpc://"+sys.argv[2]])
 fcntl.ioctl(fd,termios.TIOCSWINSZ,struct.pack("HHHH",40,120,0,0))
 output=b""; deadline=time.monotonic()+10
 try:
