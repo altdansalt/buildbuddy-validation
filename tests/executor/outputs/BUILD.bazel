@@ -43,3 +43,21 @@ go_test(
     tags = ["bug", "local", "requires-network"],
     deps = DEPS,
 )
+
+go_test(
+    name = "declaration_property",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "property_test.go"],
+    tags = ["local", "requires-network"],
+    deps = DEPS,
+)
+
+go_test(
+    name = "ignored_legacy_symlink",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "ignored_symlink_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)
