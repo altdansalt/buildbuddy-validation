@@ -25,6 +25,7 @@ import (
 	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -159,8 +160,15 @@ func TestFetchBlobStateMachine(t *testing.T) {
 					}
 					for _, surface := range surfaces {
 						c := clients[surface]
+						presenceCtx := ctx
+						if component == harness.CacheProxy {
+							remotePresence, err := c.CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{InstanceName: instance, BlobDigests: []*repb.Digest{d}})
+							require.NoError(t, err)
+							require.Len(t, remotePresence.MissingBlobDigests, 1, "default proxy FindMissingBlobs reflects upstream")
+							presenceCtx = metadata.AppendToOutgoingContext(ctx, "proxy_skip_remote", "true")
+						}
 						require.Eventually(t, func() bool {
-							r, e := c.CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{InstanceName: instance, BlobDigests: []*repb.Digest{d}})
+							r, e := c.CAS.FindMissingBlobs(presenceCtx, &repb.FindMissingBlobsRequest{InstanceName: instance, BlobDigests: []*repb.Digest{d}})
 							return e == nil && len(r.MissingBlobDigests) == 0
 						}, 10*time.Second, 50*time.Millisecond)
 						got, err := c.Read(ctx, instance, d)
