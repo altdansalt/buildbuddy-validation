@@ -25,5 +25,19 @@ Run the malformed-tree probe explicitly with
 
 Limits: this is bounded stress coverage, not an exhaustive maximum-size test.
 It checks `is_executable`; optional Unix mode node properties are not assumed
-supported. Docker/Firecracker isolation, runner recycling, concurrent actions,
-and symlink traversal during output upload are outside this coverage.
+supported. Docker/Firecracker isolation, runner recycling, and symlink traversal during
+output upload are outside this coverage.
+
+Round 2 adds eight simultaneous actions in each of two cold/warm waves, sharing
+256-file subtrees and checking executable bits. Inputs share hardlinked inodes:
+commands must unlink a path before replacing its content, rather than mutate an
+input inode in place. Optional file/directory properties are accepted without
+assuming their modes or timestamps are honored; the passing case uses a nonempty
+directory.
+
+`//tests/executor/input-tree:input_tree_limits_test` is bug-tagged and contains
+two independent failure assertions: materializing 65,536 identical files across
+256 directories exceeds the filesystem hardlink limit, and an empty Directory
+with NodeProperties is reported missing despite successful CAS upload/readback.
+Run it explicitly with `--test_tag_filters=bug --nocache_test_results`. Findings
+record both reproductions and remain unverified pending review.
