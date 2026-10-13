@@ -36,7 +36,7 @@ func marker(t *testing.T, f *harness.Fixture, executor harness.Component, path s
 func TestSeededPriorityAndStrictGroupFairness(t *testing.T) {
 	for _, fairness := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fairness=%t", fairness), func(t *testing.T) {
-			f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}, Config: map[harness.Component]harness.Config{harness.Executor: {"executor": harness.Config{"max_concurrent_tasks": 1}}}, Args: map[harness.Component][]string{harness.Executor: {"--log_level=debug"}}})
+			f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}, Config: map[harness.Component]harness.Config{harness.Executor: {"executor": harness.Config{"max_concurrent_tasks": 1}}}, Args: map[harness.Component][]string{harness.Executor: {"--app.log_level=debug"}}})
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
 			c := f.Clients(harness.App)
@@ -118,17 +118,39 @@ func TestAbruptKillsRetryUntilExhaustion(t *testing.T) {
 	path := "/tmp/" + f.ID + "-attempt"
 	name, result := submit(t, ctx, c, action(t, ctx, c, "touch "+path+"; sleep 40; printf unexpected-success", false), 0)
 	current := harness.Executor
-	for attempt := 1; attempt <= 5; attempt++ {
-		marker(t, f, current, path)
-		t.Logf("operation=%s killing attempt=%d executor=%s", name, attempt, current)
+	var o observation
+	kills := 0
+attempts:
+	for attempt := 1; attempt <= 6; attempt++ {
+		deadline := time.NewTimer(45 * time.Second)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		started := false
+		for !started {
+			select {
+			case o = <-result:
+				deadline.Stop()
+				ticker.Stop()
+				break attempts
+			case <-deadline.C:
+				ticker.Stop()
+				t.Fatalf("no command start or terminal response on attempt %d; app logs: %s", attempt, f.Logs(harness.App))
+			case <-ticker.C:
+				started = f.Exec(current, "sh", "-c", "if test -f "+path+"; then echo yes; fi") == "yes"
+			}
+		}
+		deadline.Stop()
+		ticker.Stop()
+		require.LessOrEqual(t, attempt, 5, "scheduler exceeded its five-claim retry budget")
+		t.Logf("operation=%s killing command start=%d executor=%s", name, attempt, current)
 		f.Kill(current, "KILL")
 		require.NotZero(t, f.WaitExit(current, true))
-		// A fresh container makes the marker prove a fresh attempt, not stale state.
-		if attempt < 5 {
-			current = f.AddExecutor(harness.Options{})
-		}
+		kills++
+		// Claims count towards the retry budget before shell startup; a killed
+		// executor may claim a retry during the fault-injection race. Watch the
+		// terminal response as well as the fresh container's marker.
+		current = f.AddExecutor(harness.Options{})
 	}
-	o := <-result
+	require.GreaterOrEqual(t, kills, 2, "must exercise repeated abrupt failures")
 	require.NoError(t, o.err)
 	require.Equal(t, name, o.name)
 	require.EqualValues(t, 13, o.response.GetStatus().GetCode(), "%v", o.response)
