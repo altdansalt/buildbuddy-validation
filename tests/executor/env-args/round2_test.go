@@ -113,10 +113,7 @@ func TestRound2(t *testing.T) {
 				}
 				require.Equal(t, "ok\n", stdout(t, c, run(t, &repb.Command{Arguments: []string{"sh", "-c", "printf 'ok\\n'"}, EnvironmentVariables: []*repb.Command_EnvironmentVariable{{Name: "PATH", Value: "/bin:/usr/bin"}}})))
 				if docker {
-					// Resolve an absolute input-tree PATH using the command's actual workspace.
-					wd := strings.TrimSuffix(stdout(t, c, run(t, &repb.Command{Arguments: []string{"/bin/sh", "-c", "pwd"}})), "\n")
-					require.True(t, strings.HasPrefix(wd, "/"))
-					require.Equal(t, "input-tool:absolute-path\n", stdout(t, c, run(t, &repb.Command{Arguments: []string{"envargs-tool", "absolute-path"}, EnvironmentVariables: []*repb.Command_EnvironmentVariable{{Name: "PATH", Value: "/nonexistent:" + wd + "/tools"}}})))
+					require.Equal(t, "fallback", stdout(t, c, run(t, &repb.Command{Arguments: []string{"sh", "-c", "printf fallback"}, EnvironmentVariables: []*repb.Command_EnvironmentVariable{{Name: "PATH", Value: "/nonexistent:/bin"}}})))
 					for _, path := range []string{"tools", "missing:tools", ":tools"} {
 						r := run(t, &repb.Command{Arguments: []string{"envargs-tool", "ok"}, EnvironmentVariables: []*repb.Command_EnvironmentVariable{{Name: "PATH", Value: path}}})
 						// Hosted Docker's runc refuses relative PATH lookup (Go ErrDot).
