@@ -2,7 +2,7 @@ load("@rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "config_test",
-    srcs = ["config_test.go", "helpers_test.go"],
+    srcs = ["config_test.go", "helpers_test.go", "round2_helpers_test.go", "round2_test.go"],
     size = "large",
     timeout = "long",
     tags = ["local", "requires-network"],
@@ -15,5 +15,23 @@ go_test(
     size = "large",
     timeout = "long",
     tags = ["local", "requires-network"],
+    deps = ["//harness:go_default_library"],
+)
+
+go_test(
+    name = "reload_atomicity_bug_test",
+    srcs = ["helpers_test.go", "round2_helpers_test.go", "reload_atomicity_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["bug", "local", "requires-network"],
+    deps = ["//harness:go_default_library"],
+)
+
+go_test(
+    name = "tls_required_bug_test",
+    srcs = ["helpers_test.go", "round2_helpers_test.go", "tls_required_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["bug", "local", "requires-network"],
     deps = ["//harness:go_default_library"],
 )
