@@ -100,6 +100,6 @@ func runRemovedMemberHTTPDownload(t *testing.T, noAnonymous bool) {
 		time.Sleep(time.Second)
 	}
 	if code == 200 {
-		t.Fatalf("(anonymous usage disabled=%v) "removed member still downloads the blob over HTTP after 45s: %q (image %s)", noAnonymous, body, f.Endpoint(harness.App).Image)
+		t.Fatalf("anonymousDisabled=%v: removed member still downloads the blob over HTTP after 45s: %q (image %s)", noAnonymous, body, f.Endpoint(harness.App).Image)
 	}
 }
