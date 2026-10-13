@@ -2,6 +2,7 @@ package configvalidation
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/altdansalt/buildbuddy-validation/harness"
 	"os"
 	"os/exec"
@@ -62,6 +63,17 @@ func restartConfig(t *testing.T, f *harness.Fixture, d docker, c harness.Compone
 	d.run(t, "cp", path, name+":/config.yaml")
 	since := time.Now().UTC().Format(time.RFC3339Nano)
 	d.run(t, "start", name)
+	// Docker may choose different ephemeral host ports on every start.
+	var ports map[string][]struct {
+		HostIP   string
+		HostPort string
+	}
+	if err := json.Unmarshal([]byte(d.run(t, "inspect", "--format", "{{json .NetworkSettings.Ports}}", name)), &ports); err != nil {
+		t.Fatal(err)
+	}
+	if bindings := ports["8080/tcp"]; len(bindings) > 0 {
+		f.Endpoint(c).HTTP = "http://127.0.0.1:" + bindings[0].HostPort
+	}
 	return since
 }
 func baseline(t *testing.T, f *harness.Fixture, c harness.Component) string {

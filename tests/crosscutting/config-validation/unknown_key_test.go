@@ -2,6 +2,7 @@ package configvalidation
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,13 @@ func TestUnknownKeyMustRejectStartup(t *testing.T) {
 			deadline := time.Now().Add(20 * time.Second)
 			for time.Now().Before(deadline) {
 				if d.run(t, "inspect", "--format", "{{.State.Running}}", f.Endpoint(c).Container) != "true" {
+					logs := d.run(t, "logs", "--since", since, f.Endpoint(c).Container)
+					if !strings.Contains(logs, "monitoring_prt") || strings.Contains(logs, "panic:") {
+						t.Fatalf("startup rejection must identify monitoring_prt without panic:\n%s", logs)
+					}
+					if d.run(t, "inspect", "--format", "{{.State.ExitCode}}", f.Endpoint(c).Container) == "0" {
+						t.Fatal("invalid config exited successfully")
+					}
 					return
 				}
 				resp, err := client.Get(f.Endpoint(c).HTTP + "/readyz?server-type=" + string(c))
@@ -30,7 +38,7 @@ func TestUnknownKeyMustRejectStartup(t *testing.T) {
 				}
 				time.Sleep(200 * time.Millisecond)
 			}
-			t.Fatal("unknown key did not produce a bounded startup rejection")
+			t.Fatalf("unknown key did not produce a bounded startup rejection\n%s", d.run(t, "logs", "--since", since, f.Endpoint(c).Container))
 		})
 	}
 }
