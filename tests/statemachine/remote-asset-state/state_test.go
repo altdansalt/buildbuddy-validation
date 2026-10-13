@@ -120,12 +120,10 @@ func TestFetchBlobStateMachine(t *testing.T) {
 	defer cancel()
 	clients := map[harness.Component]*harness.Clients{harness.App: f.Clients(harness.App), harness.CacheProxy: f.Clients(harness.CacheProxy)}
 	bb, bbErr := exec.LookPath("bb")
-	if bbErr != nil {
-		t.Log("bb CLI unavailable on runner; ByteStream backing surface remains checked")
-	}
+	require.NoError(t, bbErr, "runner must provide bb for CLI read-surface coverage")
 	for _, component := range []harness.Component{harness.App, harness.CacheProxy} {
 		t.Run(string(component), func(t *testing.T) {
-			instance := "remote-asset-state/" + string(component)
+			instance := "" // bb download accepts the default-instance HASH/SIZE form.
 			model := map[string][]byte{}
 			fetch := func(want []byte, immutable bool, fresh bool) {
 				mu.Lock()
@@ -155,7 +153,11 @@ func TestFetchBlobStateMachine(t *testing.T) {
 				model[rsp.BlobDigest.Hash] = append([]byte(nil), want...)
 				for _, data := range model {
 					d := harness.Digest(data)
-					for _, surface := range []harness.Component{harness.App, harness.CacheProxy} {
+					surfaces := []harness.Component{harness.App, harness.CacheProxy}
+					if component == harness.CacheProxy {
+						surfaces = []harness.Component{harness.CacheProxy}
+					}
+					for _, surface := range surfaces {
 						c := clients[surface]
 						require.Eventually(t, func() bool {
 							r, e := c.CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{InstanceName: instance, BlobDigests: []*repb.Digest{d}})
@@ -172,14 +174,21 @@ func TestFetchBlobStateMachine(t *testing.T) {
 						md := unary(t, ctx, c, "/cache.service.Cache/GetMetadata", metadataRequest(d, instance))
 						_, size := field(md, 5)
 						require.EqualValues(t, len(data), size)
-						if bbErr == nil {
-							cmd := exec.CommandContext(ctx, bb, "download", "--target=grpc://"+f.Endpoint(surface).GRPC, "--api_key="+f.APIKey, "/"+harness.ResourceName(instance, d, false))
+						{
+							cmd := exec.CommandContext(ctx, bb, "download", "--target=grpc://"+f.Endpoint(surface).GRPC, "--api_key="+f.APIKey, fmt.Sprintf("%s/%d", d.Hash, d.SizeBytes))
 							got, err := cmd.Output()
 							require.NoError(t, err)
 							require.Equal(t, data, got)
 						}
 					}
-					checkApp(t, ctx, f, clients[harness.App], instance, d, data)
+					if component == harness.App {
+						checkApp(t, ctx, f, clients[harness.App], instance, d, data)
+					} else {
+						// Released proxy fetches deliberately populate only its local CAS.
+						missing, err := clients[harness.App].CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{InstanceName: instance, BlobDigests: []*repb.Digest{d}})
+						require.NoError(t, err)
+						require.Len(t, missing.MissingBlobDigests, 1)
+					}
 				}
 			}
 			mu.Lock()
@@ -239,7 +248,7 @@ func checkApp(t *testing.T, ctx context.Context, f *harness.Fixture, c *harness.
 	}
 	require.Equal(t, want, all)
 	for _, path := range []string{"/file/download?bytestream_url=" + url.QueryEscape(uri)} {
-		r, err := http.NewRequestWithContext(ctx, "GET", f.Endpoint(harness.App).HTTP+path, nil)
+		r, err := http.NewRequestWithContext(ctx, "GET", f.Web.URL+path, nil)
 		require.NoError(t, err)
 		r.Header.Set("x-buildbuddy-api-key", f.APIKey)
 		res, err := f.Web.Client.Do(r)
@@ -258,7 +267,7 @@ func checkApp(t *testing.T, ctx context.Context, f *harness.Fixture, c *harness.
 		}
 		b, err := json.Marshal(payload)
 		require.NoError(t, err)
-		r, err := http.NewRequestWithContext(ctx, "POST", f.Endpoint(harness.App).HTTP+"/api/v1/"+method, bytes.NewReader(b))
+		r, err := http.NewRequestWithContext(ctx, "POST", f.Web.URL+"/api/v1/"+method, bytes.NewReader(b))
 		require.NoError(t, err)
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("x-buildbuddy-api-key", f.APIKey)
