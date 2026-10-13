@@ -66,53 +66,40 @@ Medium severity is appropriate because conforming authenticated API consumers si
 
 ## Version history
 
-Verified on 2026-10-13 using the unchanged bug-tagged target `//tests/app/invocations-api:log_pagination_bug_test`
-from `origin/area/app-invocations-api` at `2b9f8d922e9e3cf108a2c9bf2d94b1f5829cc30b`.
-Tests ran inside disposable fixture-local released containers on hosted runners.
+Tested on 2026-10-13 against five released linux/amd64 app images, spanning
+2026-04-16 through 2026-10-08. The unchanged bug-tagged target
+`//tests/app/invocations-api:log_pagination_bug_test` from PR branch
+`area/app-invocations-api` at `2b9f8d922e9e3cf108a2c9bf2d94b1f5829cc30b` ran once per release
+with fresh fixture-local containers and test-result caching disabled.
 
-| Release | Published | Result | Bazel invocation | Runner invocation |
+| Enterprise release | Release date | GCR manifest digest | Result | BuildBuddy invocation |
 | --- | --- | --- | --- | --- |
-| enterprise-v2.314.0 | 2026-10-08 | Reproduces | [results](https://app.buildbuddy.io/invocation/ab214fa0-ff83-47c9-9644-59a8b3038d04) | [runner](https://app.buildbuddy.io/invocation/eb049c2d-145f-41cc-81ab-b2990e8c3c2a) |
-| enterprise-v2.313.0 | 2026-10-06 | Reproduces | [results](https://app.buildbuddy.io/invocation/6e73827e-18af-442b-9b6f-8c73691a69bd) | [runner](https://app.buildbuddy.io/invocation/db9c3c9c-e3c9-4f4b-8e1e-7a7ac25d9ae4) |
-| enterprise-v2.290.0 | 2026-07-29 | Reproduces | [results](https://app.buildbuddy.io/invocation/aacbf37e-1f48-4340-813d-15aed8ee6455) | [runner](https://app.buildbuddy.io/invocation/256d903c-ab1e-4e21-9c3e-853734a3441d) |
-| enterprise-v2.275.0 | 2026-06-04 | Reproduces | [results](https://app.buildbuddy.io/invocation/5a6b83d7-3c9e-41c4-bd5a-8ff71cd6d859) | [runner](https://app.buildbuddy.io/invocation/1b9de404-2fca-46e2-9965-535de71d8564) |
-| enterprise-v2.260.0 | 2026-04-16 | Reproduces | [results](https://app.buildbuddy.io/invocation/4d91574b-8fda-4cbf-a1b8-0356237b74d0) | [runner](https://app.buildbuddy.io/invocation/fafe222f-5034-4854-b934-fe650f7d8d23) |
+| 2.314.0 | 2026-10-08 | `sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/0d0e0ff0-6eea-427a-86aa-264fc25c49e8) ([runner](https://app.buildbuddy.io/invocation/d00aeec8-dfdc-4e10-976f-79070cfb34f1)) |
+| 2.313.0 | 2026-10-06 | `sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/50d7b227-e3a1-4b6f-a641-ccc8f54c4d74) ([runner](https://app.buildbuddy.io/invocation/b3bfccd8-8bb8-431c-8180-271cc423fff5)) |
+| 2.300.0 | 2026-09-01 | `sha256:03bd9ccb5888936beb301a577bf01560511cded6fa909079cbb53277aa32ed68` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/86004e50-afc5-4ee9-be1d-14fc413818e8) ([runner](https://app.buildbuddy.io/invocation/019f3321-eafe-4cf4-8f60-6000a631ab70)) |
+| 2.280.0 | 2026-06-23 | `sha256:d9fbae912f786a0f95d351ffb7c580a6ecb8b1fb636fd3fe8899bf1cb8350a35` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/c32b1b66-8202-4efc-95a7-e806162038e7) ([runner](https://app.buildbuddy.io/invocation/cc70958a-dd13-4172-b239-804dc44652de)) |
+| 2.260.0 | 2026-04-16 | `sha256:0f6376865cc9c92d0e837aa1cb53717b59875db68a1b09b6dd479c571f6ab88e` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/933706c1-fa37-4881-9e70-b23ddacadfe2) ([runner](https://app.buildbuddy.io/invocation/bb610748-3587-4fc7-8c33-347fd4269912)) |
 
-Observed in every release marked Reproduces: GetLog returned only 270,217 of 2,250,021 uploaded bytes; the first line was absent and pagination did not recover earlier chunks.
+All image references use
+`gcr.io/flame-public/buildbuddy-app-enterprise@<digest>`; digests were resolved
+from the GCR manifest API for the corresponding `enterprise-v<version>` tags.
+The 2.314.0 digest matches the repository default.
 
-Earliest tested reproducing release: **enterprise-v2.260.0 (2026-04-16)**.
-The defect was present by that release; its introduction release is unknown
-and may be earlier. These five samples span nearly six months and do not
-establish uninterrupted behavior in untested intermediate releases.
+Observed on every tested version: All runs return 270,217 of 2,250,021 uploaded bytes, omit FIRST-LINE and retain LAST-LINE. The explicit first-token and multi-chunk controls complete before the intended byte-count assertion fails.
 
-No startup/configuration changes were needed. Each execution reached the
-reported protocol assertion rather than failing fixture startup or authentication.
-The manifest lookup for the initially considered v2.258.0 returned HTTP 404;
-v2.260.0 was used as the April sample instead.
+**Earliest tested release reproducing: 2.260.0 (2026-04-16).**
+The defect was present by that release; the introduction version is unknown.
+All sampled releases reproduce, so this matrix does not establish an
+introduction interval or imply every intervening release was tested.
 
-Exact linux/amd64 manifest pins resolved from the GCR manifest API:
+No older release required startup configuration changes. All five reached
+the intended product assertion after fixture startup and authentication.
 
-| Release | Component | Image reference |
-| --- | --- | --- |
-| enterprise-v2.314.0 | app | `gcr.io/flame-public/buildbuddy-app-enterprise@sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` |
-| enterprise-v2.313.0 | app | `gcr.io/flame-public/buildbuddy-app-enterprise@sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` |
-| enterprise-v2.290.0 | app | `gcr.io/flame-public/buildbuddy-app-enterprise@sha256:f3b285107f28da495e9496dd848857ce0cf6cddbf3fac8743b259c2a7a8678b6` |
-| enterprise-v2.275.0 | app | `gcr.io/flame-public/buildbuddy-app-enterprise@sha256:75ffd43cf6dc14ccf5a652b760d7e4d7390dfa7870524c57e7f354f271e96db1` |
-| enterprise-v2.260.0 | app | `gcr.io/flame-public/buildbuddy-app-enterprise@sha256:0f6376865cc9c92d0e837aa1cb53717b59875db68a1b09b6dd479c571f6ab88e` |
-
-Runner checkout used origin/main at `40ac83dc2c3d00efd8993a68e33a2b6df445c8fc`
-with the original test-area files applied from their PR branches in a temporary
-checkout; this history branch contains only findings. The reproducible command
-for the current release is (replace image references with the row for an older release):
+Command pattern (run from the repro branch; substitute the digest above):
 
 ```sh
-GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/invocations-api:log_pagination_bug_test \
+GIT_CONFIG_GLOBAL=/dev/null bb remote --runner_exec_properties=init-dockerd=true test \
+  //tests/app/invocations-api:log_pagination_bug_test \
   --test_tag_filters=bug --nocache_test_results --test_output=all \
-  --test_arg=-harness.app_image='gcr.io/flame-public/buildbuddy-app-enterprise@sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843'
+  --test_arg=-harness.app_image=gcr.io/flame-public/buildbuddy-app-enterprise@<digest>
 ```
-
-Each linked invocation ran all 12 in-scope reproducers together, with explicit
-app, executor, and cacheproxy digest overrides; unused components were not started.
-The final bug filter overrides the default nobug exclusion, and test-result
-caching was disabled. Container configs, logs, and inspect metadata are retained
-in the invocations' undeclared test outputs.

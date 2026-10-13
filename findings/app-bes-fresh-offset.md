@@ -58,53 +58,40 @@ Commands used `GIT_CONFIG_GLOBAL=/dev/null bb remote test <targets> --config=nob
 
 ## Version history
 
-Verified on 2026-10-13 using the unchanged bug-tagged target `//tests/app/bes:fresh_offset`
-from `origin/area/app-bes` at `f13831aec05f0a4204f08487ce7af2c0278dcdff`.
-Tests ran inside disposable fixture-local released containers on hosted runners.
+Tested on 2026-10-13 against five released linux/amd64 app images, spanning
+2026-04-16 through 2026-10-08. The unchanged bug-tagged target
+`//tests/app/bes:fresh_offset` from PR branch
+`area/app-bes` at `f13831aec05f0a4204f08487ce7af2c0278dcdff` ran once per release
+with fresh fixture-local containers and test-result caching disabled.
 
-| Release | Published | Result | Bazel invocation | Runner invocation |
+| Enterprise release | Release date | GCR manifest digest | Result | BuildBuddy invocation |
 | --- | --- | --- | --- | --- |
-| enterprise-v2.314.0 | 2026-10-08 | Reproduces | [results](https://app.buildbuddy.io/invocation/ab214fa0-ff83-47c9-9644-59a8b3038d04) | [runner](https://app.buildbuddy.io/invocation/eb049c2d-145f-41cc-81ab-b2990e8c3c2a) |
-| enterprise-v2.313.0 | 2026-10-06 | Reproduces | [results](https://app.buildbuddy.io/invocation/6e73827e-18af-442b-9b6f-8c73691a69bd) | [runner](https://app.buildbuddy.io/invocation/db9c3c9c-e3c9-4f4b-8e1e-7a7ac25d9ae4) |
-| enterprise-v2.290.0 | 2026-07-29 | Reproduces | [results](https://app.buildbuddy.io/invocation/aacbf37e-1f48-4340-813d-15aed8ee6455) | [runner](https://app.buildbuddy.io/invocation/256d903c-ab1e-4e21-9c3e-853734a3441d) |
-| enterprise-v2.275.0 | 2026-06-04 | Reproduces | [results](https://app.buildbuddy.io/invocation/5a6b83d7-3c9e-41c4-bd5a-8ff71cd6d859) | [runner](https://app.buildbuddy.io/invocation/1b9de404-2fca-46e2-9965-535de71d8564) |
-| enterprise-v2.260.0 | 2026-04-16 | Reproduces | [results](https://app.buildbuddy.io/invocation/4d91574b-8fda-4cbf-a1b8-0356237b74d0) | [runner](https://app.buildbuddy.io/invocation/fafe222f-5034-4854-b934-fe650f7d8d23) |
+| 2.314.0 | 2026-10-08 | `sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/73a8336f-ad5e-4632-9b3e-6b1ef362ab2c) ([runner](https://app.buildbuddy.io/invocation/52f381ca-2e20-41b8-9f5e-7d991d8ba75d)) |
+| 2.313.0 | 2026-10-06 | `sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/027fd6f9-3a36-4245-a90f-d5bba1be228c) ([runner](https://app.buildbuddy.io/invocation/96568462-b6c8-4205-a1ca-14d2c289c481)) |
+| 2.300.0 | 2026-09-01 | `sha256:03bd9ccb5888936beb301a577bf01560511cded6fa909079cbb53277aa32ed68` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/d6058197-e260-4db6-8838-7bead66fc4c3) ([runner](https://app.buildbuddy.io/invocation/88cbc43b-f2bc-4291-8c13-005e1eca9327)) |
+| 2.280.0 | 2026-06-23 | `sha256:d9fbae912f786a0f95d351ffb7c580a6ecb8b1fb636fd3fe8899bf1cb8350a35` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/928050db-890c-4b7b-a451-f01568a743e8) ([runner](https://app.buildbuddy.io/invocation/4305fb17-c221-4a2c-ad29-45207066821c)) |
+| 2.260.0 | 2026-04-16 | `sha256:0f6376865cc9c92d0e837aa1cb53717b59875db68a1b09b6dd479c571f6ab88e` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/5a3c4c84-24f5-4e03-bd53-6baaf85cad67) ([runner](https://app.buildbuddy.io/invocation/dfd702a3-f796-4d22-9a7a-cfdba85df0a5)) |
 
-Observed in every release marked Reproduces: A fresh stream starting at sequence 2 succeeded and received an ACK for sequence 2.
+All image references use
+`gcr.io/flame-public/buildbuddy-app-enterprise@<digest>`; digests were resolved
+from the GCR manifest API for the corresponding `enterprise-v<version>` tags.
+The 2.314.0 digest matches the repository default.
 
-Earliest tested reproducing release: **enterprise-v2.260.0 (2026-04-16)**.
-The defect was present by that release; its introduction release is unknown
-and may be earlier. These five samples span nearly six months and do not
-establish uninterrupted behavior in untested intermediate releases.
+Observed on every tested version: A fresh stream starting at sequence 2 succeeds and ACKs sequence 2 even though invocation readback is NOT_FOUND; container logs say the EventChannel was voided.
 
-No startup/configuration changes were needed. Each execution reached the
-reported protocol assertion rather than failing fixture startup or authentication.
-The manifest lookup for the initially considered v2.258.0 returned HTTP 404;
-v2.260.0 was used as the April sample instead.
+**Earliest tested release reproducing: 2.260.0 (2026-04-16).**
+The defect was present by that release; the introduction version is unknown.
+All sampled releases reproduce, so this matrix does not establish an
+introduction interval or imply every intervening release was tested.
 
-Exact linux/amd64 manifest pins resolved from the GCR manifest API:
+No older release required startup configuration changes. All five reached
+the intended product assertion after fixture startup and authentication.
 
-| Release | Component | Image reference |
-| --- | --- | --- |
-| enterprise-v2.314.0 | app | `gcr.io/flame-public/buildbuddy-app-enterprise@sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` |
-| enterprise-v2.313.0 | app | `gcr.io/flame-public/buildbuddy-app-enterprise@sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` |
-| enterprise-v2.290.0 | app | `gcr.io/flame-public/buildbuddy-app-enterprise@sha256:f3b285107f28da495e9496dd848857ce0cf6cddbf3fac8743b259c2a7a8678b6` |
-| enterprise-v2.275.0 | app | `gcr.io/flame-public/buildbuddy-app-enterprise@sha256:75ffd43cf6dc14ccf5a652b760d7e4d7390dfa7870524c57e7f354f271e96db1` |
-| enterprise-v2.260.0 | app | `gcr.io/flame-public/buildbuddy-app-enterprise@sha256:0f6376865cc9c92d0e837aa1cb53717b59875db68a1b09b6dd479c571f6ab88e` |
-
-Runner checkout used origin/main at `40ac83dc2c3d00efd8993a68e33a2b6df445c8fc`
-with the original test-area files applied from their PR branches in a temporary
-checkout; this history branch contains only findings. The reproducible command
-for the current release is (replace image references with the row for an older release):
+Command pattern (run from the repro branch; substitute the digest above):
 
 ```sh
-GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/bes:fresh_offset \
+GIT_CONFIG_GLOBAL=/dev/null bb remote --runner_exec_properties=init-dockerd=true test \
+  //tests/app/bes:fresh_offset \
   --test_tag_filters=bug --nocache_test_results --test_output=all \
-  --test_arg=-harness.app_image='gcr.io/flame-public/buildbuddy-app-enterprise@sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843'
+  --test_arg=-harness.app_image=gcr.io/flame-public/buildbuddy-app-enterprise@<digest>
 ```
-
-Each linked invocation ran all 12 in-scope reproducers together, with explicit
-app, executor, and cacheproxy digest overrides; unused components were not started.
-The final bug filter overrides the default nobug exclusion, and test-result
-caching was disabled. Container configs, logs, and inspect metadata are retained
-in the invocations' undeclared test outputs.
