@@ -34,8 +34,7 @@ func LoginSelfAuth(t testing.TB, ep *Endpoint) *WebSession {
 	if err != nil {
 		t.Fatal(err)
 	}
-	published, err := url.Parse(ep.HTTP)
-	if err != nil {
+	if _, err := url.Parse(ep.HTTP); err != nil {
 		t.Fatal(err)
 	}
 	// The app can resolve its own Docker alias, while this process uses the
@@ -43,6 +42,10 @@ func LoginSelfAuth(t testing.TB, ep *Endpoint) *WebSession {
 	transport := &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if addr != issuer.Host {
 			return nil, fmt.Errorf("self-auth request outside fixture: %s", addr)
+		}
+		published, err := url.Parse(ep.HTTP)
+		if err != nil {
+			return nil, err
 		}
 		return (&net.Dialer{}).DialContext(ctx, network, published.Host)
 	}}

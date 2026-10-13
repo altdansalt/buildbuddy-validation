@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,40 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
-
-// Resolve only the daemon which owns this fixture's exact container. This also
-// works with the harness's private-daemon fallback without reading private fields.
-func docker(t *testing.T, f *harness.Fixture) func(...string) string {
-	t.Helper()
-	hosts := []string{""}
-	sockets, err := filepath.Glob(filepath.Join(os.TempDir(), "bbval-docker-*", "docker.sock"))
-	require.NoError(t, err)
-	for _, s := range sockets {
-		hosts = append(hosts, "unix://"+s)
-	}
-	for _, host := range hosts {
-		prefix := []string{}
-		if host != "" {
-			prefix = []string{"--host", host}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_, err := exec.CommandContext(ctx, "docker", append(prefix, "inspect", f.Endpoint(harness.Executor).Container)...).CombinedOutput()
-		cancel()
-		if err != nil {
-			continue
-		}
-		return func(args ...string) string {
-			t.Helper()
-			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-			defer cancel()
-			b, err := exec.CommandContext(ctx, "docker", append(append([]string{}, prefix...), args...)...).CombinedOutput()
-			require.NoError(t, err, "docker %v: %s", args, b)
-			return strings.TrimSpace(string(b))
-		}
-	}
-	t.Fatal("could not locate fixture Docker daemon")
-	return nil
-}
 
 func probe(ep *harness.Endpoint, path string, header bool) int {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -127,20 +92,18 @@ func execute(t *testing.T, f *harness.Fixture, script string, started func()) {
 
 func TestRegistrationHealthAndRestart(t *testing.T) {
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
-	d := docker(t, f)
 	ep := f.Endpoint(harness.Executor)
 	for _, path := range []string{"/healthz", "/readyz"} {
 		require.Equal(t, 200, probe(ep, path, false))
 		require.Equal(t, 200, probe(ep, path, true))
 	}
 	execute(t, f, "printf 'lifecycle-ok\\n'", nil)
-	d("stop", "--time", "40", ep.Container)
-	require.Equal(t, "0", d("inspect", "--format", "{{.State.ExitCode}}", ep.Container))
-	d("start", ep.Container)
-	ep.HTTP = "http://" + d("port", ep.Container, "8080/tcp")
+	f.Stop(harness.Executor)
+	require.Zero(t, f.WaitExit(harness.Executor, false))
+	f.Start(harness.Executor)
 	require.Eventually(t, func() bool { return probe(ep, "/readyz", false) == 200 }, time.Minute, 250*time.Millisecond)
 	execute(t, f, "printf 'lifecycle-ok\\n'", nil)
-	logs := d("logs", ep.Container)
+	logs := f.Logs(harness.Executor)
 	require.NotContains(t, logs, "panic:")
 	require.NotContains(t, logs, "fatal error:")
 }
@@ -149,19 +112,18 @@ func TestGracefulDrainInFlight(t *testing.T) {
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}, Args: map[harness.Component][]string{
 		harness.Executor: {"--max_shutdown_duration=40s", "--shutdown_lameduck_duration=2s"},
 	}})
-	d := docker(t, f)
 	ep := f.Endpoint(harness.Executor)
 	marker := "/tmp/" + f.ID + "-started"
 	execute(t, f, fmt.Sprintf("touch %s; sleep 8; printf 'lifecycle-ok\\n'", marker), func() {
 		require.Eventually(t, func() bool {
-			return d("exec", ep.Container, "sh", "-c", "if test -f "+marker+"; then echo started; fi") == "started"
+			return f.Exec(harness.Executor, "sh", "-c", "if test -f "+marker+"; then echo started; fi") == "started"
 		}, 15*time.Second, 100*time.Millisecond)
-		d("kill", "--signal=TERM", ep.Container)
+		f.Kill(harness.Executor, "TERM")
 		require.Eventually(t, func() bool { return probe(ep, "/readyz", false) == 503 }, time.Second, 50*time.Millisecond)
 		require.Equal(t, 200, probe(ep, "/healthz", false))
 	})
-	require.Equal(t, "0", d("wait", ep.Container))
-	logs := d("logs", ep.Container)
+	require.Zero(t, f.WaitExit(harness.Executor, false))
+	logs := f.Logs(harness.Executor)
 	require.NotContains(t, logs, "Non-graceful exit")
 	require.NotContains(t, logs, "panic:")
 }
@@ -176,26 +138,27 @@ func TestAdjacentReleaseSkew(t *testing.T) {
 }
 
 func TestInvalidBuildRootFailsAndRecovers(t *testing.T) {
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
-	d := docker(t, f)
-	ep := f.Endpoint(harness.Executor)
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor},
+		Config:               map[harness.Component]harness.Config{harness.Executor: {"executor": harness.Config{"root_directory": "/dev/null/executor"}}},
+		ExpectStartupFailure: map[harness.Component]bool{harness.Executor: true},
+	})
+	require.NotZero(t, f.WaitExit(harness.Executor, true))
+	require.Contains(t, f.Logs(harness.Executor), "not a directory")
+	require.NotContains(t, f.Logs(harness.Executor), "panic:")
 	original := filepath.Join(f.OutputDir, "executor.yaml")
 	data, err := os.ReadFile(original)
 	require.NoError(t, err)
-	require.Contains(t, string(data), "/data/executor")
-	invalid := filepath.Join(f.OutputDir, "executor-invalid.yaml")
-	require.NoError(t, os.WriteFile(invalid, []byte(strings.ReplaceAll(string(data), "/data/executor", "/dev/null/executor")), 0600))
-	d("stop", "--time", "40", ep.Container)
-	d("cp", invalid, ep.Container+":/config.yaml")
-	d("start", ep.Container)
-	require.Eventually(t, func() bool { return d("inspect", "--format", "{{.State.Running}}", ep.Container) == "false" }, 30*time.Second, 200*time.Millisecond)
-	require.NotEqual(t, "0", d("inspect", "--format", "{{.State.ExitCode}}", ep.Container))
-	logs := d("logs", ep.Container)
-	require.Contains(t, logs, "not a directory")
-	require.NotContains(t, logs, "panic:")
-	d("cp", original, ep.Container+":/config.yaml")
-	d("start", ep.Container)
-	ep.HTTP = "http://" + d("port", ep.Container, "8080/tcp")
-	require.Eventually(t, func() bool { return probe(ep, "/readyz", false) == 200 }, time.Minute, 250*time.Millisecond)
+	recovered := filepath.Join(f.OutputDir, "executor-recovered.yaml")
+	require.NoError(t, os.WriteFile(recovered, []byte(strings.ReplaceAll(string(data), "/dev/null/executor", "/data/executor")), 0600))
+	f.CopyConfig(harness.Executor, recovered)
+	f.Restart(harness.Executor)
+	execute(t, f, "printf 'lifecycle-ok\\n'", nil)
+}
+
+func TestAdditionalExecutorAndRestart(t *testing.T) {
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
+	extra := f.AddExecutor(harness.Options{})
+	f.Stop(harness.Executor)
+	f.Restart(extra)
 	execute(t, f, "printf 'lifecycle-ok\\n'", nil)
 }
