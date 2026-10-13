@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -147,6 +148,7 @@ func TestEveryEventProjection(t *testing.T) {
 		var viewed []map[string]any
 		require.NoError(t, json.Unmarshal(webBytes(t, f, "/file/view?invocation_id="+m.id+"&artifact=raw_json"), &viewed))
 		require.Equal(t, raw, viewed)
+		checkPartialModel(t, f, m, i)
 	}
 	require.NoError(t, stream.CloseSend())
 	for i := range m.events {
@@ -294,4 +296,138 @@ func streamedFile(t *testing.T, f *harness.Fixture, uri string) []byte {
 		}
 	}
 	return all
+}
+
+type partialTarget struct{ configured, results, summaries, actions int }
+
+// partialModel replays events[0..k] into the state every target reader must
+// expose after exactly those events and before any later one.
+func partialModel(m buildModel, k int) (map[string]*partialTarget, bool) {
+	out := map[string]*partialTarget{}
+	finished := false
+	for _, e := range m.events[:k+1] {
+		id := values(e, 1)[0]
+		for _, kind := range []protowire.Number{16, 8, 7, 6, 9} {
+			v := values(id, kind)
+			if len(v) == 0 {
+				continue
+			}
+			if kind == 9 {
+				finished = true
+				continue
+			}
+			labelField := protowire.Number(1)
+			if kind == 6 { // ActionCompletedId: primary_output = 1, label = 2
+				labelField = 2
+			}
+			label := string(values(v[0], labelField)[0])
+			p := out[label]
+			if p == nil {
+				p = &partialTarget{}
+				out[label] = p
+			}
+			switch kind {
+			case 16:
+				p.configured++
+			case 8:
+				p.results++
+			case 7:
+				p.summaries++
+			case 6:
+				p.actions++
+			}
+		}
+	}
+	return out, finished
+}
+
+func checkPartialModel(t *testing.T, f *harness.Fixture, m buildModel, k int) {
+	t.Helper()
+	want, finished := partialModel(m, k)
+	configured := 0
+	for _, p := range want {
+		configured += p.configured
+	}
+	started := time.Now()
+	var last string
+	defer func() {
+		if t.Failed() {
+			t.Logf("partial model diagnostic after event %d: %s", k+1, last)
+		}
+	}()
+	require.Eventually(t, func() bool {
+		res, err := f.Web.RPC("GetInvocation", map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "lookup": map[string]any{"invocationId": m.id}})
+		if err != nil {
+			last = err.Error()
+			return false
+		}
+		inv := objects(t, res, "invocation")
+		if len(inv) != 1 || fmt.Sprint(inv[0].(map[string]any)["targetConfiguredCount"]) != fmt.Sprint(configured) && !(configured == 0 && inv[0].(map[string]any)["targetConfiguredCount"] == nil) {
+			last = fmt.Sprintf("invocation %v want configured=%d", inv, configured)
+			return false
+		}
+		raw := readRPC(t, f, "/buildbuddy.service.BuildBuddyService/GetInvocation", field(2, str(1, m.id)))
+		if scalar(values(raw, 2)[0], 34) != uint64(configured) {
+			last = "grpc configured count"
+			return false
+		}
+		for _, x := range m.targets {
+			p := want[x.label]
+			if p == nil {
+				p = &partialTarget{}
+			}
+			ui, err := f.Web.RPC("GetTarget", map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "invocationId": m.id, "targetLabel": x.label})
+			if err != nil {
+				if p.configured == 0 && strings.Contains(err.Error(), "NotFound") {
+					continue
+				}
+				last = err.Error()
+				return false
+			}
+			var targets []any
+			for _, g := range objects(t, ui, "targetGroups") {
+				targets = append(targets, objects(t, g.(map[string]any), "targets")...)
+			}
+			if p.configured == 0 {
+				if len(targets) != 0 {
+					last = fmt.Sprintf("%s visible before TargetConfigured", x.label)
+					return false
+				}
+				continue
+			}
+			if len(targets) != 1 {
+				last = fmt.Sprintf("%s ui targets=%d", x.label, len(targets))
+				return false
+			}
+			tg := targets[0].(map[string]any)
+			if len(objects(t, tg, "testResultEvents")) != p.results || len(objects(t, tg, "actionEvents")) != p.actions || (tg["testSummary"] != nil) != (p.summaries > 0) {
+				last = fmt.Sprintf("%s ui results=%d actions=%d summary=%v want %+v", x.label, len(objects(t, tg, "testResultEvents")), len(objects(t, tg, "actionEvents")), tg["testSummary"] != nil, *p)
+				return false
+			}
+			wire := readRPC(t, f, "/buildbuddy.service.BuildBuddyService/GetTarget", msg(str(1, m.id), str(2, x.label)))
+			gv := values(wire, 1)
+			if len(gv) != 1 || len(values(gv[0], 2)) != 1 {
+				last = "grpc target group"
+				return false
+			}
+			d := values(gv[0], 2)[0]
+			if len(values(d, 6)) != p.results || len(values(d, 8)) != p.actions || (len(values(d, 7)) > 0) != (p.summaries > 0) {
+				last = fmt.Sprintf("%s grpc results=%d actions=%d summary=%d want %+v", x.label, len(values(d, 6)), len(values(d, 8)), len(values(d, 7)), *p)
+				return false
+			}
+			code, rest := api(t, f, "GetTarget", map[string]any{"selector": map[string]any{"invocationId": m.id, "label": x.label}})
+			if code != 200 || len(objects(t, rest, "target")) != 1 {
+				last = fmt.Sprintf("%s api target code=%d %v", x.label, code, rest)
+				return false
+			}
+		}
+		code, rest := api(t, f, "GetInvocation", map[string]any{"selector": map[string]any{"invocationId": m.id}})
+		if code != 200 || len(objects(t, rest, "invocation")) != 1 {
+			last = fmt.Sprintf("api invocation code=%d", code)
+			return false
+		}
+		_ = finished
+		return true
+	}, 15*time.Second, 100*time.Millisecond, "partial model after event %d did not converge", k+1)
+	t.Logf("event=%d partial-model convergence=%s", k+1, time.Since(started))
 }
