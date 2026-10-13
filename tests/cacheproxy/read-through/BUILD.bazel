@@ -4,7 +4,13 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["read_through_test.go"],
+    srcs = [
+        "cdc_fixture_test.go",
+        "cdc_test.go",
+        "read_through_test.go",
+        "round2_test.go",
+        "support_test.go",
+    ],
     tags = [
         "local",
         "requires-network",
@@ -12,6 +18,25 @@ go_test(
     deps = [
         "//harness:go_default_library",
         "@org_golang_google_genproto_googleapis_bytestream//:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//metadata:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)
+
+go_test(
+    name = "cdc_bounded_read_bug_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["cdc_range_bug_test.go", "cdc_fixture_test.go", "support_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@org_golang_google_genproto_googleapis_bytestream//:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
         "@org_golang_google_grpc//codes:go_default_library",
         "@org_golang_google_grpc//metadata:go_default_library",
         "@org_golang_google_grpc//status:go_default_library",
