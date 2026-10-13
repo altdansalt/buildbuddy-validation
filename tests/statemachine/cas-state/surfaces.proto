@@ -14,3 +14,8 @@ message Size { string digest = 1; int64 total_size = 2; int64 child_count = 3; }
 message SizesResponse { repeated Size sizes = 2; }
 message FileRequest { string uri = 1; int64 start = 2; int64 end = 3; }
 message FileResponse { bytes data = 1; }
+message Empty {}
+message ZipRequest { string uri = 2; }
+message ZipEntry { string name = 1; int64 uncompressed_size = 2; int64 compressed_size = 3; int64 header_offset = 4; int64 content_offset = 5; int32 compression = 6; uint32 crc32 = 7; }
+message ZipManifest { repeated ZipEntry entry = 1; }
+message ZipResponse { ZipManifest manifest = 2; }
