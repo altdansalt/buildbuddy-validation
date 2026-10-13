@@ -16,7 +16,8 @@ Contract references:
 `regression` covers modern/legacy files and Trees, missing outputs, empty files
 and directories, no declared outputs, executable permissions, content digest
 independence from mtime, dangling/file/directory symlinks, an 80 MiB output,
-legacy selection overridden by output_paths, and outputs overwriting inputs.
+legacy selection overridden by output_paths, intentional legacy-only directory
+precreation, and outputs overwriting inputs.
 It does not assert that optional requested mtime metadata is supported.
 
 Run passing coverage with:
@@ -24,6 +25,9 @@ Run passing coverage with:
 ```sh
 bb remote test //tests/executor/outputs/... --config=nobug
 ```
+
+`legacy_directory_precreation` reproduces only the workspace change caused by
+legacy output_directories when output_paths is also set.
 
 Bug targets use separate test binaries so failures do not hide passing
 coverage. Three findings in findings/executor-outputs-*.md document two reproduction

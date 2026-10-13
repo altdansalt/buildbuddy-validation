@@ -12,7 +12,7 @@ go_test(
     name = "regression",
     size = "large",
     timeout = "long",
-    srcs = ["helpers_test.go", "outputs_test.go"],
+    srcs = ["helpers_test.go", "missing_test.go", "outputs_test.go"],
     tags = ["local", "requires-network"],
     deps = DEPS,
 )
@@ -36,10 +36,10 @@ go_test(
 )
 
 go_test(
-    name = "missing_legacy_directory",
+    name = "legacy_directory_precreation",
     size = "large",
     timeout = "long",
-    srcs = ["helpers_test.go", "missing_test.go"],
+    srcs = ["helpers_test.go", "precreation_test.go"],
     tags = ["bug", "local", "requires-network"],
     deps = DEPS,
 )
