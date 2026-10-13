@@ -17,11 +17,11 @@ import (
 
 // Own the daemon as well as its containers: socket access never reaches another
 // worker's containers. Register daemon cleanup before the fixture so it runs last.
-func dockerFixture(t *testing.T) *harness.Fixture {
+func privateDaemon(t *testing.T) (dir, socket string) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "bbval-isolation-")
+	dir, err := os.MkdirTemp("", "bbval-envargs-")
 	require.NoError(t, err)
-	socket := filepath.Join(dir, "docker.sock")
+	socket = filepath.Join(dir, "docker.sock")
 	log, err := os.Create(filepath.Join(dir, "dockerd.log"))
 	require.NoError(t, err)
 	var pool [2]byte
@@ -31,7 +31,7 @@ func dockerFixture(t *testing.T) *harness.Fixture {
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "sudo", "-n", "dockerd", "--host=unix://"+socket,
 		"--data-root="+filepath.Join(dir, "docker"), "--exec-root="+filepath.Join(dir, "exec"),
-		"--pidfile="+filepath.Join(dir, "pid"), "--bridge=none", "--default-address-pool=base="+poolCIDR+",size=28")
+		"--pidfile="+filepath.Join(dir, "pid"), "--bridge=none", "--registry-mirror=https://mirror.gcr.io", "--default-address-pool=base="+poolCIDR+",size=28")
 	cmd.Stdout = log
 	cmd.Stderr = log
 	require.NoError(t, cmd.Start())
@@ -52,7 +52,7 @@ func dockerFixture(t *testing.T) *harness.Fixture {
 		log.Close()
 		if out := os.Getenv("TEST_UNDECLARED_OUTPUTS_DIR"); out != "" {
 			b, _ := os.ReadFile(filepath.Join(dir, "dockerd.log"))
-			require.NoError(t, os.WriteFile(filepath.Join(out, "isolation-dockerd.log"), b, 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(out, filepath.Base(dir)+"-dockerd.log"), b, 0600))
 		}
 		b, err := exec.Command("sudo", "-n", "rm", "-rf", "--", dir).CombinedOutput()
 		require.NoError(t, err, string(b))
@@ -69,6 +69,13 @@ func dockerFixture(t *testing.T) *harness.Fixture {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	return dir, socket
+}
+
+func dockerFixture(t *testing.T) *harness.Fixture {
+	t.Helper()
+	dir, socket := privateDaemon(t)
+
 	b, err := exec.Command("docker", "network", "create", "action-network").CombinedOutput()
 	require.NoError(t, err, string(b))
 	t.Cleanup(func() {

@@ -12,8 +12,8 @@ go_test(
     name = "regression_test",
     size = "large",
     timeout = "long",
-    srcs = ["helpers_test.go", "regression_test.go"],
-    tags = ["local", "requires-network"],
+    srcs = ["helpers_test.go", "docker_helpers_test.go", "regression_test.go"],
+    tags = ["exclusive", "local", "requires-network"],
     deps = DEPS,
 )
 
@@ -21,8 +21,8 @@ go_test(
     name = "path_bug_test",
     size = "large",
     timeout = "long",
-    srcs = ["helpers_test.go", "path_bug_test.go"],
-    tags = ["bug", "local", "requires-network"],
+    srcs = ["helpers_test.go", "docker_helpers_test.go", "path_bug_test.go"],
+    tags = ["bug", "exclusive", "local", "requires-network"],
     deps = DEPS,
 )
 

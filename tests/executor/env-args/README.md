@@ -57,3 +57,7 @@ it is not filed as a BuildBuddy defect. Qualified executables and absolute
 system PATH entries succeed. For execve overflow, bare execution returns an
 execution status diagnostic; Docker returns exit 255 with the diagnostic in
 CAS-backed stderr. Both forms are accepted and checked for `argument list too long`.
+
+All area targets use exclusive scheduling and private Docker daemons with the
+public `mirror.gcr.io` registry mirror, avoiding Docker Hub anonymous pull limits
+without changing the pinned Redis digest or forwarding credentials.

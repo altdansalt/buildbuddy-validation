@@ -20,6 +20,7 @@ const instance = "env-args"
 
 func fixture(t *testing.T) *harness.Clients {
 	t.Helper()
+	privateDaemon(t)
 	var f *harness.Fixture
 	// Register before Start so this runs after the harness saves container logs.
 	t.Cleanup(func() {
