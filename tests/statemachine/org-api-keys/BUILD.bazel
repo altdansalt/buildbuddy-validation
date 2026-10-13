@@ -14,3 +14,37 @@ go_test(
         "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
     ],
 )
+
+go_test(
+    name = "modern_visibility_repro",
+    srcs = ["lifecycle_test.go", "visibility_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["bug", "local", "requires-network"],
+    args = ["-test.run=TestModernVisibility"],
+    deps = [
+        "//harness:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+    ],
+)
+
+go_test(
+    name = "expiry_projection_repro",
+    srcs = ["lifecycle_test.go", "visibility_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["bug", "local", "requires-network"],
+    args = ["-test.run=TestExpiryProjection"],
+    deps = [
+        "//harness:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+    ],
+)

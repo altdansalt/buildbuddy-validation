@@ -62,3 +62,59 @@ passed: https://app.buildbuddy.io/invocation/bfa8a055-683b-4692-88d3-cc6e15d01e3
 Initial projection-assumption failure:
 https://app.buildbuddy.io/invocation/f1414d0d-7bf5-4002-81c9-4114cf260bb0;
 corrected against the released implementation, not recorded as a product defect.
+
+## Round 2 additions
+
+The lifecycle now executes the actual runner `bb login --check` against the local
+app, with a temporary Git repository and disposable local key. The CLI environment
+is limited to PATH, HOME and TMPDIR, without reading the dispatch key. It also retains the audit's
+GetUser acceptance rule and AC persistence oracle: writes through app and proxy
+are read through both components; CAS_WRITE must not persist AC entries. CAS
+uploads through either component are read through both. These run after each
+create/update, and CLI/auth/CAS rejection is checked after each delete.
+
+Creation expectations come from the request, with independent distinct-ID checks.
+Inventory checks require exact baseline-plus-live-key counts, no duplicate IDs,
+and preservation of unrelated key projections. Creation timestamps must be
+present and remain unchanged across updates. Capabilities are compared as sets
+because the release's bitmask conversion does not guarantee array order. Modern
+visibility output is checked against the deprecated requests in the green suite;
+modern input semantics have a separate failing contract repro. Cross-group
+GetApiKey requires PermissionDenied; disabled certificate generation requires
+FailedPrecondition. HTTP deletion must specifically contain gRPC NotFound,
+rather than accepting any HTTP/infrastructure error.
+
+Convergence is bounded at 20 seconds under explicit one-second TTLs and requires
+15 further successful samples over at least 1.5 seconds. Each observation logs
+its elapsed time under `--test_arg=-test.v`; this measures polling elapsed time,
+not total time since the mutation. The isolated modern-visibility repro uses
+**default** app configuration and reproduces both create and update loss in two
+independent runs. See `app-org-api-keys-modern-visibility.md`.
+
+Additional frontend inventory: `enterprise/app/api_keys/api_keys.tsx` calls
+GetApiKeys/GetApiKey (including includeCertificate); `app/docs/setup_code.tsx`
+calls GetBazelConfig and lazy GetApiKey; executor and cache-proxy setup pages use
+those same RPCs. `app/auth/certificate_download_link.tsx` creates client-side Blob
+URLs from returned certificate contents, not a separate server download RPC.
+No API-key-specific streaming/log/raw-JSON read RPC was found. Generic invocation
+logs/downloads expose invocation state rather than API-key inventory.
+
+Remaining coverage is explicit: server-admin impersonation creation, enabled certificate generation/mTLS,
+distinct developer identities, user-owned-key boundaries, audit-log OLAP reads,
+and default-TTL app/proxy convergence are still untested. Thus this remains an
+incremental suite, not a claim that every round-2 coverage requirement is met.
+The fixture does not expose restart/reconfiguration for a post-bootstrap
+server-admin group, nor multiple identities/OLAP. No shared files were edited.
+
+Expiry projections have an additional twice-reproduced default-config bug target,
+`expiry_projection_repro`, documented in `app-org-api-keys-expiry-projection.md`.
+The green `TestExpiryEnforcement` warms both components with a three-second key,
+requires eventual Unauthenticated followed by stable rejection, verifies expired keys
+are filtered from detail and inventories (as in the released query).
+
+Round-2 final green targeted invocation:
+https://app.buildbuddy.io/invocation/3eb7c0ab-6e24-4c7f-a902-8480568f85cc
+Lifecycle polling elapsed 0.229–1.210 seconds; expiry rejection 3.205 seconds,
+followed by 15 successful stability samples. These are non-default one-second
+TTL results, not default-TTL bounds. Both repro pairs are linked in their finding
+files. Ordinary CI excludes the two bug targets. No PR was opened.

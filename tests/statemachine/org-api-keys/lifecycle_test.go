@@ -5,7 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -88,8 +92,27 @@ func decode(b []byte) key {
 			b = b[n:]
 		}
 	}
+	sort.Slice(k.caps, func(i, j int) bool { return k.caps[i] < k.caps[j] })
 	v, _ := protowire.ConsumeVarint(first(m, 5))
 	k.visible = v == 1
+	var mask uint64
+	for _, packed := range m[10] {
+		for len(packed) > 0 {
+			v, n := protowire.ConsumeVarint(packed)
+			if n < 0 {
+				panic("bad visibility")
+			}
+			mask |= v
+			packed = packed[n:]
+		}
+	}
+	want := uint64(2)
+	if k.visible {
+		want = 3
+	}
+	if mask != want {
+		panic(fmt.Sprintf("visibility mask=%d want %d", mask, want))
+	}
 	return k
 }
 func rpc(ctx context.Context, c *grpc.ClientConn, method string, req []byte) ([]byte, error) {
@@ -116,7 +139,40 @@ func TestLifecycle(t *testing.T) {
 		require(t, err)
 		return out
 	}
+	cliRepo := t.TempDir()
+	cliEnv := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + cliRepo, "TMPDIR=" + os.TempDir()}
+	cli := func(name string, args ...string) error {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Dir = cliRepo
+		cmd.Env = cliEnv
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s: %v: %s", name, err, out)
+		}
+		return nil
+	}
+	require(t, cli("git", "init"))
+	require(t, os.WriteFile(filepath.Join(cliRepo, ".bazelversion"), []byte("7.4.1\n"), 0600))
+	baseline := map[string]map[string]key{}
+	for _, method := range []string{"GetApiKeys", "GetBazelConfig"} {
+		n := protowire.Number(2)
+		if method == "GetBazelConfig" {
+			n = 4
+		}
+		baseline[method] = map[string]key{}
+		for _, b := range fields(call(method, nil))[n] {
+			if n == 4 {
+				b = first(fields(b), 1)
+			}
+			k := decode(b)
+			baseline[method][k.id] = k
+		}
+	}
+	otherGroup := f.Web.CreateGroup(t, "other-org")
+	outsider := harness.Dial(t, f.Endpoint(harness.App).GRPC, f.Web.CreateAPIKey(t, otherGroup, "other-admin", []string{"ORG_ADMIN"}))
+	metadata := map[string]string{}
 	var model key
+	identities := map[string]bool{}
 	check := func(present bool) {
 		t.Helper()
 		for _, method := range []string{"GetApiKeys", "GetBazelConfig"} {
@@ -126,13 +182,44 @@ func TestLifecycle(t *testing.T) {
 				n = 4
 			}
 			var got *key
+			seen := map[string]bool{}
 			for _, b := range fields(out)[n] {
 				if n == 4 {
 					b = first(fields(b), 1)
 				}
 				k := decode(b)
+				if seen[k.id] {
+					t.Fatalf("%s duplicate ID %s", method, k.id)
+				}
+				seen[k.id] = true
+				if old, ok := baseline[method][k.id]; ok && !reflect.DeepEqual(old, k) {
+					t.Fatalf("%s changed unrelated key %s: got=%+v want=%+v", method, k.id, k, old)
+				}
 				if k.id == model.id {
+					if method == "GetApiKeys" {
+						md := first(fields(b), 9)
+						ts := first(fields(md), 1)
+						if len(ts) == 0 {
+							t.Fatal("missing creation timestamp")
+						}
+						if old, ok := metadata[k.id]; ok && old != string(md) {
+							t.Fatal("creation metadata changed during update")
+						}
+						metadata[k.id] = string(md)
+					}
 					got = &k
+				}
+			}
+			expectedCount := len(baseline[method])
+			if present {
+				expectedCount++
+			}
+			if len(seen) != expectedCount {
+				t.Fatalf("%s count=%d want %d", method, len(seen), expectedCount)
+			}
+			for id := range baseline[method] {
+				if !seen[id] {
+					t.Fatalf("%s lost baseline key %s", method, id)
 				}
 			}
 			if (got != nil) != present {
@@ -166,6 +253,10 @@ func TestLifecycle(t *testing.T) {
 					}
 				}
 			}
+			arr, _ := res[field].([]any)
+			if len(arr) != expectedCount {
+				t.Fatalf("HTTP %s count=%d want %d", method, len(arr), expectedCount)
+			}
 			if found != present {
 				t.Fatalf("HTTP %s presence=%v want %v", method, found, present)
 			}
@@ -173,13 +264,21 @@ func TestLifecycle(t *testing.T) {
 		out, err := rpc(ctx, admin.Conn, "GetApiKey", append(append([]byte(nil), rc...), str(2, model.id)...))
 		res, we := f.Web.RPC("GetApiKey", map[string]any{"requestContext": webRC, "apiKeyId": model.id})
 		if !present {
-			if status.Code(err) != codes.NotFound || we == nil {
+			if status.Code(err) != codes.NotFound || we == nil || !strings.Contains(we.Error(), "code = NotFound") {
 				t.Fatalf("deleted detail: grpc=%v HTTP=%v", err, we)
 			}
 			return
 		}
 		require(t, err)
 		require(t, we)
+		_, crossErr := rpc(ctx, outsider.Conn, "GetApiKey", append(msg(1, str(2, otherGroup)), str(2, model.id)...))
+		if status.Code(crossErr) != codes.PermissionDenied {
+			t.Fatalf("cross-group detail: %v", crossErr)
+		}
+		_, certErr := rpc(ctx, admin.Conn, "GetApiKey", append(append(append([]byte(nil), rc...), str(2, model.id)...), num(3, 1)...))
+		if status.Code(certErr) != codes.FailedPrecondition {
+			t.Fatalf("disabled certificate path: %v", certErr)
+		}
 		got := decode(first(fields(out), 2))
 		if !reflect.DeepEqual(got, model) {
 			t.Fatalf("detail mismatch %+v model %+v", got, model)
@@ -190,18 +289,46 @@ func TestLifecycle(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		b := append(str(3, "created"), num(4, 1)...)
 		model = decode(first(fields(call("CreateApiKey", b)), 2))
+		if identities[model.id] {
+			t.Fatal("creation reused deleted identity")
+		}
+		identities[model.id] = true
+		if model.label != "created" || !reflect.DeepEqual(model.caps, []uint64{1}) || model.visible {
+			t.Fatalf("create did not match request: %+v", model)
+		}
 		if model.id == "" || model.value == "" {
 			t.Fatal("missing created identity")
 		}
 		check(true)
+		require(t, cli("git", "config", "buildbuddy.api-key", model.value))
 		clients := []*harness.Clients{harness.Dial(t, f.Endpoint(harness.App).GRPC, model.value), harness.Dial(t, f.Endpoint(harness.CacheProxy).GRPC, model.value)}
+		probeCounter := 0
 		auth := func(capability uint64, live bool) error {
+			probeCounter++
+			cmd := exec.CommandContext(ctx, "bb", "login", "--check", "--target=grpc://"+f.Endpoint(harness.App).GRPC, "--url="+f.Endpoint(harness.App).HTTP)
+			cmd.Dir = cliRepo
+			cmd.Env = cliEnv
+			output, cliErr := cmd.CombinedOutput()
+			if live && cliErr != nil {
+				return fmt.Errorf("bb login: %v: %s", cliErr, output)
+			}
+			if !live {
+				if e, ok := cliErr.(*exec.ExitError); !ok || e.ExitCode() != 1 {
+					return fmt.Errorf("bb login revoked exit=%v output=%s", cliErr, output)
+				}
+			}
+			// Match the actual bb login org-key acceptance rule.
+			_, loginErr := rpc(ctx, clients[0].Conn, "GetUser", nil)
+			loginOK := loginErr == nil || (status.Code(loginErr) == codes.NotFound && strings.Contains(loginErr.Error(), "user not found"))
+			if loginOK != live {
+				return fmt.Errorf("GetUser CLI login acceptance=%v want %v: %v", loginOK, live, loginErr)
+			}
 			req := []byte{}
 			var out []byte
 			err := clients[0].Conn.Invoke(ctx, "/auth.AuthService/Authenticate", &req, &out, grpc.ForceCodec(wireCodec{}))
 			if !live {
-				if err == nil {
-					return fmt.Errorf("revoked key still authenticates")
+				if status.Code(err) != codes.Unauthenticated {
+					return fmt.Errorf("revoked key authentication status: %v", err)
 				}
 			} else {
 				if err != nil {
@@ -234,6 +361,41 @@ func TestLifecycle(t *testing.T) {
 					return fmt.Errorf("revoked CAS auth: %v", err)
 				}
 			}
+			if live {
+				// CAS writes are observable through both components, for both write capabilities.
+				for i, writer := range clients {
+					payload := []byte(fmt.Sprintf("cas-cycle-%d-probe-%d-writer-%d", i, probeCounter, i))
+					d, e := writer.Upload(ctx, "", payload)
+					if e != nil {
+						return e
+					}
+					for j, reader := range clients {
+						got, e := reader.Read(ctx, "", d)
+						if e != nil || string(got) != string(payload) {
+							return fmt.Errorf("CAS writer=%d reader=%d payload=%q error=%v", i, j, got, e)
+						}
+					}
+				}
+				// CACHE_WRITE persists AC entries; CAS_WRITE silently ignores writes.
+				// A successful UpdateActionResult alone is therefore no oracle.
+				for i, writer := range clients {
+					d := harness.Digest([]byte(fmt.Sprintf("ac-probe-%s-%d-%d", model.id, i, probeCounter)))
+					_, e := writer.AC.UpdateActionResult(ctx, &repb.UpdateActionResultRequest{ActionDigest: d, ActionResult: &repb.ActionResult{ExitCode: 17}})
+					if e != nil {
+						return e
+					}
+					for j, reader := range clients {
+						result, e := reader.AC.GetActionResult(ctx, &repb.GetActionResultRequest{ActionDigest: d})
+						if capability == 1 {
+							if e != nil || result.GetExitCode() != 17 {
+								return fmt.Errorf("AC writer=%d reader=%d CACHE_WRITE: result=%v error=%v", i, j, result, e)
+							}
+						} else if status.Code(e) != codes.NotFound {
+							return fmt.Errorf("AC writer=%d reader=%d CAS_WRITE persisted: result=%v error=%v", i, j, result, e)
+						}
+					}
+				}
+			}
 			return nil
 		}
 		eventually(t, ctx, func() error { return auth(1, true) })
@@ -261,6 +423,7 @@ func TestLifecycle(t *testing.T) {
 }
 func eventually(t *testing.T, ctx context.Context, fn func() error) {
 	t.Helper()
+	start := time.Now()
 	timer := time.NewTimer(20 * time.Second)
 	defer timer.Stop()
 	tick := time.NewTicker(100 * time.Millisecond)
@@ -268,6 +431,17 @@ func eventually(t *testing.T, ctx context.Context, fn func() error) {
 	for {
 		err := fn()
 		if err == nil {
+			t.Logf("convergence observed after %s", time.Since(start))
+			for i := 0; i < 15; i++ {
+				select {
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-tick.C:
+				}
+				if err := fn(); err != nil {
+					t.Fatalf("converged state unstable: %v", err)
+				}
+			}
 			return
 		}
 		select {
@@ -284,6 +458,9 @@ func checkJSON(t *testing.T, m map[string]any, want key, secret bool) {
 	label, _ := m["label"].(string)
 	value, _ := m["value"].(string)
 	visible, _ := m["visibleToDevelopers"].(bool)
+	if m["id"] != want.id {
+		t.Fatalf("HTTP identity=%v want %s", m["id"], want.id)
+	}
 	if label != want.label || visible != want.visible || (secret && value != want.value) || (!secret && value != "") {
 		t.Fatalf("HTTP metadata mismatch for %s", want.id)
 	}
@@ -295,6 +472,55 @@ func checkJSON(t *testing.T, m map[string]any, want key, secret bool) {
 	for i, v := range caps {
 		if v != names[want.caps[i]] && v != float64(want.caps[i]) {
 			t.Fatalf("HTTP capability %v", v)
+		}
+	}
+}
+
+func TestExpiryEnforcement(t *testing.T) {
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}, Args: map[harness.Component][]string{harness.App: {"--auth.api_key_group_cache_ttl=1s"}, harness.CacheProxy: {"--auth.remote.jwt_cache_ttl=1s"}}})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	admin := harness.Dial(t, f.Endpoint(harness.App).GRPC, f.Web.CreateAPIKey(t, f.GroupID, "expiry-admin", []string{"ORG_ADMIN"}))
+	rc := msg(1, str(2, f.GroupID))
+	req := append(append([]byte(nil), rc...), str(3, "short-lived")...)
+	req = append(req, num(4, 1)...)
+	req = append(req, msg(7, num(1, 3))...)
+	out, err := rpc(ctx, admin.Conn, "CreateApiKey", req)
+	require(t, err)
+	k := decode(first(fields(out), 2))
+	clients := []*harness.Clients{harness.Dial(t, f.Endpoint(harness.App).GRPC, k.value), harness.Dial(t, f.Endpoint(harness.CacheProxy).GRPC, k.value)}
+	for _, c := range clients {
+		_, err := c.CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{})
+		require(t, err)
+	}
+	eventually(t, ctx, func() error {
+		for i, c := range clients {
+			_, err := c.CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{})
+			if status.Code(err) != codes.Unauthenticated {
+				return fmt.Errorf("expired key component %d: %v", i, err)
+			}
+		}
+		return nil
+	})
+	// The released read query filters expired keys from detail and inventories.
+	_, err = rpc(ctx, admin.Conn, "GetApiKey", append(append([]byte(nil), rc...), str(2, k.id)...))
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("expired detail: %v", err)
+	}
+	for _, method := range []string{"GetApiKeys", "GetBazelConfig"} {
+		out, err = rpc(ctx, admin.Conn, method, rc)
+		require(t, err)
+		n := protowire.Number(2)
+		if method == "GetBazelConfig" {
+			n = 4
+		}
+		for _, b := range fields(out)[n] {
+			if n == 4 {
+				b = first(fields(b), 1)
+			}
+			if decode(b).id == k.id {
+				t.Fatalf("%s exposes expired key", method)
+			}
 		}
 	}
 }
