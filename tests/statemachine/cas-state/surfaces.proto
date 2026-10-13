@@ -1,0 +1,16 @@
+syntax = "proto3";
+package casstate;
+option go_package = "github.com/altdansalt/buildbuddy-validation/tests/statemachine/cas-state/surfaces";
+// Wire-compatible projections of released v2.314.0 proto/cache.proto,
+// proto/resource.proto and proto/api/v1/file.proto. No product source dependency.
+message Digest { string hash = 1; int64 size_bytes = 2; }
+message Resource { Digest digest = 1; string instance_name = 2; int32 compressor = 3; int32 cache_type = 4; int32 digest_function = 5; }
+message MetadataRequest { Resource resource_name = 2; }
+message MetadataResponse { int64 stored_size_bytes = 2; int64 last_access_usec = 3; int64 last_modify_usec = 4; int64 digest_size_bytes = 5; }
+message TreeRequest { string instance_name = 2; Digest root_digest = 3; int32 page_size = 4; string page_token = 5; int32 digest_function = 6; }
+message TreeResponse { repeated bytes directories = 2; string next_page_token = 3; }
+message SizesRequest { Digest root_digest = 2; string instance_name = 3; int32 digest_function = 4; }
+message Size { string digest = 1; int64 total_size = 2; int64 child_count = 3; }
+message SizesResponse { repeated Size sizes = 2; }
+message FileRequest { string uri = 1; int64 start = 2; int64 end = 3; }
+message FileResponse { bytes data = 1; }
