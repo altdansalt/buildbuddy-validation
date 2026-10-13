@@ -8,8 +8,8 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -68,6 +68,7 @@ func (f *fixture) run(t *testing.T, protocol, key, content string, args []string
 			props = append(props, &repb.Platform_Property{Name: "persistent-workers", Value: "true"}, &repb.Platform_Property{Name: "recycle-runner", Value: "true"})
 		}
 	}
+	sort.Slice(props, func(i, j int) bool { return props[i].Name < props[j].Name })
 	cmd, err := f.c.UploadProto(ctx, instance, &repb.Command{Arguments: []string{"./worker", protocol, "@args.txt"}, Platform: &repb.Platform{Properties: props}})
 	require.NoError(t, err)
 	action, err := f.c.UploadProto(ctx, instance, &repb.Action{CommandDigest: cmd, InputRootDigest: root, Timeout: durationpb.New(20 * time.Second), DoNotCache: true})
@@ -113,13 +114,22 @@ func TestProtocolReuseAndUpdatedInputs(t *testing.T) {
 				t.Run(fmt.Sprint(i), func(t *testing.T) {
 					t.Logf("seed=%d iteration=%d protocol=%s", *seed, i, protocol)
 					alphabet := []rune("abcXYZ 012é中\\\"\t")
-					content := make([]rune, rng.Intn(1024))
+					size := rng.Intn(1024)
+					if i == 0 {
+						size = 0
+					}
+					if i == 1 {
+						size = 1024
+					}
+					content := make([]rune, size)
 					for j := range content {
 						content[j] = alphabet[rng.Intn(len(alphabet))]
 					}
 					args := []string{"", fmt.Sprintf("case=%d", i), string(content[:len(content)/2])}
 					r, baseline := f.run(t, protocol, "", string(content), args, false)
 					success(t, r)
+					require.Equal(t, string(content), baseline.Content)
+					require.Equal(t, args, baseline.Arguments)
 					r, worker := f.run(t, protocol, protocol+"-reuse", string(content), args, true)
 					success(t, r)
 					require.Equal(t, baseline.Content, worker.Content)
@@ -146,6 +156,7 @@ func TestWorkerExitRecovery(t *testing.T) {
 			r, before := f.run(t, protocol, protocol+"-crash", "before", []string{"ok"}, true)
 			success(t, r)
 			r, _ = f.run(t, protocol, protocol+"-crash", "crash", []string{"CRASH"}, true)
+			t.Logf("crash status=%v exit=%d", r.GetStatus(), r.GetResult().GetExitCode())
 			require.True(t, r.GetStatus().GetCode() != 0 || r.GetResult().GetExitCode() != 0, "worker crash must fail request")
 			r, after := f.run(t, protocol, protocol+"-crash", "after", []string{"recovered"}, true)
 			success(t, r)
@@ -162,20 +173,18 @@ func TestConcurrentMultiplexCapableWorker(t *testing.T) {
 	// The released executor sends ID zero and may use multiple worker processes.
 	for _, protocol := range []string{"json", "proto"} {
 		t.Run(protocol, func(t *testing.T) {
-			var wg sync.WaitGroup
 			for i := 0; i < 4; i++ {
 				i := i
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				t.Run(fmt.Sprint(i), func(t *testing.T) {
+					t.Parallel()
+					t.Logf("seed=%d concurrent=%d protocol=%s", *seed, i, protocol)
 					content := fmt.Sprintf("seed=%d concurrent=%d", *seed, i)
 					r, o := f.run(t, protocol, protocol+"-concurrent", content, []string{content}, true)
 					success(t, r)
 					require.Equal(t, content, o.Content)
 					require.Equal(t, []string{content}, o.Arguments)
-				}()
+				})
 			}
-			wg.Wait()
 		})
 	}
 }
