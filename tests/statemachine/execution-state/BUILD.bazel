@@ -4,12 +4,13 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["execution_test.go", "wire_test.go", "cancel_test.go", "cli_test.go"],
+    srcs = ["execution_test.go", "wire_test.go", "cancel_test.go", "cli_test.go", "surfaces_test.go"],
     tags = [
         "local",
         "requires-network",
     ],
     deps = [
+        "@org_golang_google_protobuf//encoding/protojson:go_default_library",
         "//harness:go_default_library",
         "@org_golang_google_grpc//:go_default_library",
         "@org_golang_google_genproto//googleapis/longrunning:go_default_library",
@@ -26,5 +27,18 @@ go_test(
         "@org_golang_google_grpc//status:go_default_library",
         "@org_golang_google_protobuf//proto:go_default_library",
         "@com_github_google_uuid//:go_default_library",
+    ],
+)
+
+go_test(
+    name = "cached_replay_bug_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["cached_replay_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
     ],
 )

@@ -32,7 +32,7 @@ func TestExecutionPublicationAndCacheAgreement(t *testing.T) {
 	md, err := proto.Marshal(&repb.RequestMetadata{ToolInvocationId: invocation})
 	require.NoError(t, err)
 	ctx = metadata.AppendToOutgoingContext(ctx, "build.bazel.remote.execution.v2.requestmetadata-bin", string(md))
-	input, err := c.Upload(ctx, instance, []byte("hello from a released executor\n"))
+	input, err := f.Clients(harness.CacheProxy).Upload(ctx, instance, []byte("hello from a released executor\n"))
 	require.NoError(t, err)
 	root, err := c.UploadProto(ctx, instance, &repb.Directory{Files: []*repb.FileNode{{Name: "input.txt", Digest: input}}})
 	require.NoError(t, err)
@@ -93,6 +93,8 @@ func TestExecutionPublicationAndCacheAgreement(t *testing.T) {
 		b = result.Result.StdoutRaw
 	}
 	require.Equal(t, []byte("done\n"), b)
+	auditCachedResponse(t, ctx, f, instance, invocation, name, result)
+	completeSurfaces(t, ctx, f, instance, invocation, name, result)
 	grpcProjection(t, ctx, c, invocation, name, result)
 	replayBB(t, ctx, c, name, result)
 	for replay := 0; replay < 2; replay++ {
@@ -149,6 +151,37 @@ func TestExecutionPublicationAndCacheAgreement(t *testing.T) {
 			cached, err := surface.AC.GetActionResult(ctx, &repb.GetActionResultRequest{InstanceName: instance, ActionDigest: action})
 			return err == nil && responseEqual(&repb.ExecuteResponse{Result: result.Result}, &repb.ExecuteResponse{Result: cached})
 		}, 30*time.Second, 100*time.Millisecond, "action cache must match published result: %s", component)
+		batch, err := surface.CAS.BatchReadBlobs(ctx, &repb.BatchReadBlobsRequest{InstanceName: instance, Digests: []*repb.Digest{out.Digest}})
+		require.NoError(t, err)
+		require.Len(t, batch.Responses, 1)
+		require.Zero(t, batch.Responses[0].GetStatus().GetCode())
+		require.True(t, proto.Equal(out.Digest, batch.Responses[0].Digest))
+		require.Equal(t, []byte("hello from a released executor\n"), batch.Responses[0].Data)
+		tree, err := surface.CAS.GetTree(ctx, &repb.GetTreeRequest{InstanceName: instance, RootDigest: root})
+		require.NoError(t, err)
+		page, err := tree.Recv()
+		require.NoError(t, err)
+		require.Len(t, page.Directories, 1)
+		require.True(t, proto.Equal(&repb.Directory{Files: []*repb.FileNode{{Name: "input.txt", Digest: input}}}, page.Directories[0]))
+		_, err = tree.Recv()
+		require.Equal(t, io.EOF, err)
+		for sample := 0; sample < 3; sample++ {
+			stable, err := surface.AC.GetActionResult(ctx, &repb.GetActionResultRequest{InstanceName: instance, ActionDigest: action})
+			require.NoError(t, err)
+			require.True(t, responseEqual(&repb.ExecuteResponse{Result: result.Result}, &repb.ExecuteResponse{Result: stable}))
+			if sample < 2 {
+				select {
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-time.After(250 * time.Millisecond):
+				}
+			}
+		}
+		if result.Result.StdoutDigest != nil {
+			stdout, err := surface.Read(ctx, instance, result.Result.StdoutDigest)
+			require.NoError(t, err)
+			require.Equal(t, []byte("done\n"), stdout)
+		}
 		bytes, err := surface.Read(ctx, instance, out.Digest)
 		require.NoError(t, err)
 		require.Equal(t, []byte("hello from a released executor\n"), bytes)
@@ -172,6 +205,32 @@ func TestExecutionPublicationAndCacheAgreement(t *testing.T) {
 		break
 	}
 
+	// Re-execute the same cacheable action after a cache hit. It must allocate
+	// a fresh operation while preserving deterministic command semantics.
+	again, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: instance, ActionDigest: action, SkipCacheLookup: true})
+	require.NoError(t, err)
+	var againName string
+	for {
+		op, err := again.Recv()
+		require.NoError(t, err)
+		if !op.Done {
+			continue
+		}
+		againName = op.Name
+		require.NotEqual(t, name, againName)
+		next := &repb.ExecuteResponse{}
+		require.NoError(t, op.GetResponse().UnmarshalTo(next))
+		require.Zero(t, next.GetStatus().GetCode())
+		require.Zero(t, next.GetResult().GetExitCode())
+		require.False(t, next.CachedResult)
+		require.Len(t, next.GetResult().GetOutputFiles(), 1)
+		require.True(t, proto.Equal(harness.Digest([]byte("hello from a released executor\n")), next.Result.OutputFiles[0].Digest))
+		completeSurfaces(t, ctx, f, instance, invocation, againName, next)
+		break
+	}
+	executionList(t, ctx, f, invocation, action.Hash, []string{name, againName})
+	uiInputTree(t, ctx, f, root, input)
+	downloadSurface(t, ctx, f, invocation, "", out.Digest, []byte("hello from a released executor\n"))
 	downloadCLI(t, ctx, f, out.Digest, []byte("hello from a released executor\n"))
 
 }

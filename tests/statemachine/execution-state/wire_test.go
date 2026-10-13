@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"io"
 	"testing"
 	"time"
 )
@@ -124,9 +125,10 @@ func startInvocation(t *testing.T, ctx context.Context, c *harness.Clients, id s
 		require.NoError(t, bes.CloseSend())
 		for {
 			_, err := bes.Recv()
-			if err != nil {
+			if err == io.EOF {
 				break
 			}
+			require.NoError(t, err)
 		}
 	}
 }

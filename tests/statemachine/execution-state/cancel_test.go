@@ -2,6 +2,7 @@ package executionstate_test
 
 import (
 	"context"
+	"fmt"
 	"github.com/altdansalt/buildbuddy-validation/harness"
 	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/google/uuid"
@@ -17,6 +18,13 @@ import (
 )
 
 func TestNormallyCancelExecutingAction(t *testing.T) {
+	for _, viaHTTP := range []bool{false, true} {
+		t.Run(fmt.Sprint("http=", viaHTTP), func(t *testing.T) {
+			cancelAction(t, viaHTTP)
+		})
+	}
+}
+func cancelAction(t *testing.T, viaHTTP bool) {
 	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor, harness.CacheProxy}})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -31,7 +39,7 @@ func TestNormallyCancelExecutingAction(t *testing.T) {
 	require.NoError(t, err)
 	cmd, err := c.UploadProto(ctx, "cancel", &repb.Command{Arguments: []string{"/bin/sh", "-c", "sleep 300"}, Platform: &repb.Platform{Properties: []*repb.Platform_Property{{Name: "OSFamily", Value: "linux"}, {Name: "Arch", Value: "amd64"}, {Name: "workload-isolation-type", Value: "none"}}}})
 	require.NoError(t, err)
-	action, err := c.UploadProto(ctx, "cancel", &repb.Action{CommandDigest: cmd, InputRootDigest: root, Timeout: durationpb.New(10 * time.Minute), DoNotCache: true})
+	action, err := c.UploadProto(ctx, "cancel", &repb.Action{CommandDigest: cmd, InputRootDigest: root, Timeout: durationpb.New(10 * time.Minute), DoNotCache: false})
 	require.NoError(t, err)
 	stream, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: "cancel", ActionDigest: action, SkipCacheLookup: true})
 	require.NoError(t, err)
@@ -65,9 +73,12 @@ func TestNormallyCancelExecutingAction(t *testing.T) {
 		return row["executionId"] == name && row["stage"] == "EXECUTING"
 	}, 30*time.Second, 100*time.Millisecond)
 	executingGRPC(t, ctx, c, invocation, name, action)
-	_, err = f.Web.RPC("CancelExecutions", map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "invocationId": invocation})
-	require.NoError(t, err)
-	require.NoError(t, c.Conn.Invoke(ctx, "/buildbuddy.service.BuildBuddyService/CancelExecutions", envelope(field(2, []byte(invocation))), &emptypb.Empty{}))
+	if viaHTTP {
+		_, err = f.Web.RPC("CancelExecutions", map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "invocationId": invocation})
+		require.NoError(t, err)
+	} else {
+		require.NoError(t, c.Conn.Invoke(ctx, "/buildbuddy.service.BuildBuddyService/CancelExecutions", envelope(field(2, []byte(invocation))), &emptypb.Empty{}))
+	}
 
 	var result *repb.ExecuteResponse
 	for {
@@ -101,7 +112,9 @@ func TestNormallyCancelExecutingAction(t *testing.T) {
 		status, _ := inline["status"].(map[string]any)
 		return row["executionId"] == name && row["stage"] == "COMPLETED" && status["code"] == float64(1)
 	}, 30*time.Second, 100*time.Millisecond)
+	completeSurfaces(t, ctx, f, "cancel", invocation, name, result)
 	replayBB(t, ctx, c, name, result)
+	auditCachedResponse(t, ctx, f, "cancel", invocation, name, result)
 	grpcProjection(t, ctx, c, invocation, name, result)
 	wait, err := c.Execution.WaitExecution(ctx, &repb.WaitExecutionRequest{Name: name})
 	require.NoError(t, err)
@@ -116,6 +129,11 @@ func TestNormallyCancelExecutingAction(t *testing.T) {
 		require.True(t, proto.Equal(result, got))
 		break
 	}
+	// Repeat the valid cancellation after completion; it must preserve the
+	// terminal outcome rather than enqueue a new state transition.
+	require.NoError(t, c.Conn.Invoke(ctx, "/buildbuddy.service.BuildBuddyService/CancelExecutions", envelope(field(2, []byte(invocation))), &emptypb.Empty{}))
+	grpcProjection(t, ctx, c, invocation, name, result)
+	replayBB(t, ctx, c, name, result)
 	for _, component := range []harness.Component{harness.App, harness.CacheProxy} {
 		_, err := f.Clients(component).AC.GetActionResult(ctx, &repb.GetActionResultRequest{InstanceName: "cancel", ActionDigest: action})
 		require.Equal(t, codes.NotFound, status.Code(err), "cancelled action must not become cache hit")
