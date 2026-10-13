@@ -50,9 +50,9 @@ protocol defaults, not negative cases.
 `small_splice_bug_test` checks that a six-byte blob becomes readable after a
 successful splice. Large blob reconstruction remains passing coverage.
 
-`unknown_digest_bug_test` isolates acceptance of an unknown digest function by
-FindMissingBlobs. Run explicitly with `--test_tag_filters=bug
---nocache_test_results`.
+`unknown_digest_test` covers the accepted conservative missing result for an
+unknown digest function. This does not advertise storage support for that algorithm.
+It runs in the default regression suite; the original finding was rejected.
 
 This is a bounded capabilities matrix, not exhaustive coverage of every REAPI
 field: scheduling order/fairness, arbitrary node properties, symlink policy,

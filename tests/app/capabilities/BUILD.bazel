@@ -39,11 +39,11 @@ go_test(
 )
 
 go_test(
-    name = "unknown_digest_bug_test",
+    name = "unknown_digest_test",
     size = "large",
     timeout = "long",
     srcs = ["helpers_test.go", "unknown_digest_test.go"],
-    tags = ["bug", "local", "requires-network"],
+    tags = ["local", "requires-network"],
     deps = DEPS,
 )
 
