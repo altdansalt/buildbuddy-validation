@@ -30,11 +30,17 @@ func event(id, payload protowire.Number, identity, data []byte) []byte {
 }
 
 func upload(t *testing.T, f *harness.Fixture, logs []string, exit int64) string {
+	return uploadMetadata(t, f, logs, exit, nil)
+}
+func uploadMetadata(t *testing.T, f *harness.Fixture, logs []string, exit int64, extra [][2]string) string {
 	t.Helper()
 	id := uuid.NewString()
 	now := time.Now().UnixMilli()
 	events := [][]byte{event(3, 5, nil, msg(str(1, id), num(2, now), str(3, "8.0.0"), str(4, "--color=no"), str(5, "test"), str(10, "fixture-host"), str(11, "fixture-user")))}
 	metadata := []byte{}
+	for _, kv := range extra {
+		metadata = append(metadata, field(1, msg(str(1, kv[0]), str(2, kv[1])))...)
+	}
 	for _, kv := range [][2]string{{"REPO_URL", "https://example.invalid/conformance"}, {"COMMIT_SHA", "0123456789abcdef"}, {"BRANCH_NAME", "validation"}, {"ROLE", "CI"}, {"custom-key", "custom-value"}} {
 		metadata = append(metadata, field(1, msg(str(1, kv[0]), str(2, kv[1])))...)
 	}
