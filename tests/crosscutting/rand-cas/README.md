@@ -53,3 +53,8 @@ claiming persistent partial-upload support.
 for accepting forbidden nonzero compressed read limits. It is tagged `bug` and
 excluded by `--config=nobug`; see
 [the finding](../../../../findings/crosscutting-rand-cas-compressed-read-limit.md).
+
+`unfinished_write_bug_test` isolates a missing WriteResponse after half-closing
+an incomplete upload. The recovery property logs this interrupted-stream error
+and continues querying/retrying; the separate bug target asserts the response
+contract. See [the finding](../../../../findings/crosscutting-rand-cas-unfinished-write-response.md).
