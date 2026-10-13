@@ -35,5 +35,12 @@ ignores it, and becomes ready. This is the accepted permissive loader behavior;
 strict rejection is not a promised startup contract.
 
 Not covered yet: all feature-specific required settings, conflicting isolation
-providers, external secret providers, config reload, and comprehensive typed
+providers, external secret providers, and comprehensive typed
 flag families. No host credential or cloud peer is used by the tests.
+
+Valid SIGHUP reload coverage checks live CSP changes and uses a monitoring flag
+marker to avoid stale observations. CLI override preservation is isolated in
+`cli_reload_bug_test`; see
+[the finding](../../../../findings/crosscutting-config-validation-cli-override-reload.md).
+The pinned reload resets defaults without reparsing CLI arguments, while YAML
+continues to skip explicitly set flags.
