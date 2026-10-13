@@ -48,8 +48,7 @@ Missing-envelope and malformed-wire coverage requires rejection without ACKs
 and logs observed status codes. The current release returns FailedPrecondition
 and Unknown respectively; BES does not explicitly mandate either code.
 
-`invalid_sequence_code` is a separate bug-tagged proposed canonical-error repro:
-gaps and duplicates return Unknown rather than InvalidArgument. The finding
-stays unverified pending independent review; BES explicitly mandates rejection,
-but does not explicitly choose a gRPC code. Run it with
-`--test_tag_filters=bug --nocache_test_results`.
+`invalid_sequence_code` covers gaps and duplicates returning Unknown without
+ACKs, preserving the released retransmission behavior. It runs in the default
+regression suite. Independent verification rejected the proposed InvalidArgument
+requirement; the finding remains as a record of that rejection.
