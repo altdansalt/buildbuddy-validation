@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -18,9 +19,15 @@ import (
 const workloadImage = "mirror.gcr.io/library/alpine@sha256:d56c381f961d307a21b3ca004cf1e3910f106644aefb1f43e654c8a56c4fd395"
 
 // Own the daemon as well as its containers: socket access never reaches another
-// worker's containers. Register daemon cleanup before the fixture so it runs last.
+// worker's containers. Hold the shared harness startup lock for the entire
+// fixture: Docker daemons share global iptables chains on the runner.
+// Register daemon cleanup before the fixture so it runs last.
 func fixture(t *testing.T) *harness.Fixture {
 	t.Helper()
+	lock, err := os.OpenFile(filepath.Join(os.TempDir(), "bbval-dockerd-start.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	require.NoError(t, err)
+	require.NoError(t, syscall.Flock(int(lock.Fd()), syscall.LOCK_EX))
+	t.Cleanup(func() { syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); lock.Close() })
 	dir, err := os.MkdirTemp("", "bbval-isolation-")
 	require.NoError(t, err)
 	socket := filepath.Join(dir, "docker.sock")
@@ -33,7 +40,7 @@ func fixture(t *testing.T) *harness.Fixture {
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, "sudo", "-n", "dockerd", "--host=unix://"+socket,
 		"--data-root="+filepath.Join(dir, "docker"), "--exec-root="+filepath.Join(dir, "exec"),
-		"--pidfile="+filepath.Join(dir, "pid"), "--bridge=none", "--iptables=false", "--ip-masq=false", "--default-address-pool=base="+poolCIDR+",size=28")
+		"--pidfile="+filepath.Join(dir, "pid"), "--bridge=none", "--default-address-pool=base="+poolCIDR+",size=28")
 	cmd.Stdout = log
 	cmd.Stderr = log
 	require.NoError(t, cmd.Start())
@@ -54,7 +61,7 @@ func fixture(t *testing.T) *harness.Fixture {
 		log.Close()
 		if out := os.Getenv("TEST_UNDECLARED_OUTPUTS_DIR"); out != "" {
 			b, _ := os.ReadFile(filepath.Join(dir, "dockerd.log"))
-			require.NoError(t, os.WriteFile(filepath.Join(out, "isolation-dockerd.log"), b, 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(out, filepath.Base(dir)+"-dockerd.log"), b, 0600))
 		}
 		b, err := exec.Command("sudo", "-n", "rm", "-rf", "--", dir).CombinedOutput()
 		require.NoError(t, err, string(b))

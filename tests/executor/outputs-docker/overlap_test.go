@@ -7,7 +7,7 @@ import (
 
 func TestOverlappingDirectoryOutputs(t *testing.T) {
 	r := start(t)
-	cmd := shell("mkdir tree; printf inner > tree/file")
+	cmd := shell("mkdir -p tree; printf inner > tree/file")
 	cmd.OutputPaths = []string{"tree", "tree/file"}
 	result := success(t, r.execute(t, cmd, nil))
 	require.Len(t, result.OutputDirectories, 1)

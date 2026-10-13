@@ -88,4 +88,3 @@ go_test(
     tags = ["local", "requires-network"],
     deps = DEPS,
 )
-

@@ -41,5 +41,33 @@ Contract references:
 - [Released dirtools](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/server/cache/dirtools/dirtools.go).
 - [Released workspace](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/remote_execution/workspace/workspace.go).
 
-Docker reproduction results and invocation links are recorded below after runner
-validation; findings keep status `unverified` for maintainer review.
+## Bare finding comparison
+
+All six reported bare findings also reproduce under Docker. Status stays
+`unverified` for maintainer review; each has two successful-action reproductions.
+
+| Bare finding | Docker target | Result | Severity |
+| --- | --- | --- | --- |
+| Legacy type mismatch | `legacy_type_mismatch` | Same incorrect status/types in all four cases | medium |
+| Modern symlink lost with legacy fields | `output_paths_precedence` | Same missing symlink | medium |
+| Legacy directory precreation | `legacy_directory_precreation` | Same ignored-field workspace mutation | low |
+| Requested mtime omitted | `requested_mtime` | Same missing file metadata | low |
+| Explicit nested file omitted | `overlapping_file` | Same absent OutputFile (reduced to two declarations) | low |
+| Overlapping directory Tree | `overlapping_directories` | Same missing child Directory | medium |
+
+Legacy-only precreation also occurs under Docker, retained as passing coverage
+for the release's explicitly documented old-Bazel compatibility behavior. The
+bug target isolates legacy directory creation when modern output_paths should
+supersede the legacy fields. Requested-mtime coverage accepts explicit
+INVALID_ARGUMENT, allowing implementations to decline unsupported metadata.
+
+Validation:
+- [Passing suite: all three targets](https://app.buildbuddy.io/invocation/b178eaf6-d3a8-4d00-9dab-9fe5703df28d), including seed 314159, 24 iterations per isolation mode.
+- [Bug run 1](https://app.buildbuddy.io/invocation/d6f2abde-f559-4a6b-8ca8-71d18c9960f9) and [bug run 2](https://app.buildbuddy.io/invocation/1c11d133-6aef-412d-b0a1-59b5404def25): five valid output failures; overlapping_file had a shell setup error here and is excluded.
+- Corrected minimal overlapping-file [run 1](https://app.buildbuddy.io/invocation/d1eb4d81-c8c8-45c7-8dd9-74d5e386c813) and [run 2](https://app.buildbuddy.io/invocation/dbf60ba2-6805-4d6f-b644-b90385e63425): successful actions, expected missing-OutputFile failures.
+
+Individual reports are `findings/executor-outputs-docker-*.md`. Initial Redis
+readiness failures from disabling private-daemon iptables were setup failures,
+not product findings. The area fixture now enables network rules and serializes
+its entire lifetime with the existing harness daemon lock. This is a local
+workaround; a reusable Docker-isolation fixture would be a useful harness addition.
