@@ -2,6 +2,7 @@ package caching_results_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -15,9 +16,13 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
-func execute(t *testing.T, ctx context.Context, c *harness.Clients, instance string, d *repb.Digest, skip bool) *repb.ExecuteResponse {
+func execute(t *testing.T, ctx context.Context, c *harness.Clients, instance string, d *repb.Digest, skip bool, policies ...*repb.ResultsCachePolicy) *repb.ExecuteResponse {
 	t.Helper()
-	s, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: instance, ActionDigest: d, SkipCacheLookup: skip, DigestFunction: repb.DigestFunction_SHA256})
+	request := &repb.ExecuteRequest{InstanceName: instance, ActionDigest: d, SkipCacheLookup: skip, DigestFunction: repb.DigestFunction_SHA256}
+	if len(policies) > 0 {
+		request.ResultsCachePolicy = policies[0]
+	}
+	s, err := c.Execution.Execute(ctx, request)
 	require.NoError(t, err)
 	for {
 		op, err := s.Recv()
@@ -221,4 +226,42 @@ func TestCachedFailureResponse(t *testing.T) {
 	require.True(t, hit.CachedResult)
 	require.Zero(t, hit.Result.ExitCode)
 	require.True(t, proto.Equal(fresh.Result.OutputFiles[0].Digest, hit.Result.OutputFiles[0].Digest))
+}
+
+// ResultsCachePolicy affects server-defined retention, not action identity or
+// eligibility to write the cache. No eviction ordering is assumed here.
+func TestResultsCachePolicyPriority(t *testing.T) {
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
+	c := f.Clients(harness.App)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	for _, priority := range []int32{-1, 0, 1} {
+		for _, noCache := range []bool{false, true} {
+			t.Run(fmt.Sprintf("priority_%d/do_not_cache_%t", priority, noCache), func(t *testing.T) {
+				instance := fmt.Sprintf("priority-%d-%t", priority, noCache)
+				d := action(t, ctx, c, instance, nonce+"exit 0", noCache, 20*time.Second)
+				policy := &repb.ResultsCachePolicy{Priority: priority}
+				first := execute(t, ctx, c, instance, d, false, policy)
+				require.Zero(t, first.GetStatus().GetCode())
+				require.Zero(t, first.Result.ExitCode)
+				require.False(t, first.CachedResult)
+				require.Len(t, first.Result.OutputFiles, 1)
+				cached, err := ac(t, ctx, c, instance, d)
+				if noCache {
+					require.Equal(t, codes.NotFound, status.Code(err))
+				} else {
+					require.NoError(t, err)
+					require.Len(t, cached.OutputFiles, 1)
+					require.True(t, proto.Equal(first.Result.OutputFiles[0].Digest, cached.OutputFiles[0].Digest))
+				}
+				// Changing only the requested retention priority must not hide a cache hit.
+				second := execute(t, ctx, c, instance, d, false, &repb.ResultsCachePolicy{Priority: -priority})
+				require.Zero(t, second.GetStatus().GetCode())
+				require.Zero(t, second.Result.ExitCode)
+				require.Equal(t, !noCache, second.CachedResult)
+				require.Len(t, second.Result.OutputFiles, 1)
+				require.Equal(t, !noCache, proto.Equal(first.Result.OutputFiles[0].Digest, second.Result.OutputFiles[0].Digest))
+			})
+		}
+	}
 }
