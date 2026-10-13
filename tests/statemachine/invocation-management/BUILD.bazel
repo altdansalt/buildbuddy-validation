@@ -14,7 +14,33 @@ go_test(
  name = "go_default_test",
  size = "large",
  timeout = "long",
- srcs = ["helpers_test.go", "management_test.go"],
+ srcs = ["helpers_test.go", "wire_test.go", "management_test.go", "surfaces_test.go", "admin_test.go"],
+ tags = ["local", "requires-network"],
+ deps = COMMON_DEPS + [
+ "@org_golang_google_grpc//:go_default_library",
+ "@org_golang_google_grpc//codes:go_default_library",
+ "@org_golang_google_grpc//status:go_default_library",
+ ],
+)
+
+go_test(
+ name = "divergences_test",
+ size = "large",
+ timeout = "long",
+ srcs = ["helpers_test.go", "wire_test.go", "admin_test.go", "surfaces_test.go", "divergences_test.go", "olap_test.go"],
+ tags = ["bug", "local", "requires-network"],
+ deps = COMMON_DEPS + [
+ "@org_golang_google_grpc//:go_default_library",
+ "@org_golang_google_grpc//codes:go_default_library",
+ "@org_golang_google_grpc//status:go_default_library",
+ ],
+)
+
+go_test(
+ name = "cached_api_test",
+ size = "large",
+ timeout = "long",
+ srcs = ["helpers_test.go", "wire_test.go", "cached_test.go"],
  tags = ["local", "requires-network"],
  deps = COMMON_DEPS + [
  "@org_golang_google_grpc//:go_default_library",

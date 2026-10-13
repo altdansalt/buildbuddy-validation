@@ -11,57 +11,16 @@ import (
 
 	"github.com/altdansalt/buildbuddy-validation/harness"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
-// rawCodec sends valid release-schema protobufs without generated app bindings.
-type rawCodec struct{}
-
-func (rawCodec) Name() string                  { return "proto" }
-func (rawCodec) Marshal(v any) ([]byte, error) { return v.([]byte), nil }
-func (rawCodec) Unmarshal(b []byte, v any) error {
-	*v.(*[]byte) = append([]byte(nil), b...)
-	return nil
-}
-func bytesFields(t *testing.T, b []byte, n protowire.Number) [][]byte {
-	t.Helper()
-	var out [][]byte
-	for len(b) > 0 {
-		k, typ, l := protowire.ConsumeTag(b)
-		require.Positive(t, l)
-		b = b[l:]
-		z := protowire.ConsumeFieldValue(k, typ, b)
-		require.Positive(t, z)
-		if k == n && typ == protowire.BytesType {
-			v, _ := protowire.ConsumeBytes(b)
-			out = append(out, v)
-		}
-		b = b[z:]
-	}
-	return out
-}
-func first(t *testing.T, b []byte, n protowire.Number) []byte {
-	v := bytesFields(t, b, n)
-	if len(v) == 0 {
-		return nil
-	}
-	return v[0]
-}
-func call(c *harness.Clients, method string, b []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	var out []byte
-	err := c.Conn.Invoke(ctx, method, b, &out, grpc.ForceCodec(rawCodec{}))
-	return out, err
-}
-
-const ui = "/buildbuddy.service.BuildBuddyService/"
-
 func TestManagementStateMachine(t *testing.T) {
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}})
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}, Args: map[harness.Component][]string{harness.App: {"--app.enable_target_tracking=true"}}})
+	configureOwnerRead(t, f)
+	owner := harness.Dial(t, f.Endpoint(harness.App).GRPC, f.Web.CreateAPIKey(t, f.GroupID, "server-admin", []string{"ORG_ADMIN"}))
+	second := harness.Dial(t, f.Endpoint(harness.App).GRPC, f.Web.CreateAPIKey(t, f.GroupID, "second", []string{"CACHE_WRITE"}))
 	app, proxy := f.Clients(harness.App), f.Clients(harness.CacheProxy)
 	rpc(t, f, "UpdateGroup", map[string]any{"id": f.GroupID, "name": "management", "urlIdentifier": "management", "sharingEnabled": true})
 	id := upload(t, f, []string{"management state machine\n"}, 0)
@@ -80,8 +39,9 @@ func TestManagementStateMachine(t *testing.T) {
 	originalACL := first(t, first(t, raw, 2), 20)
 	aclWire := msg(field(1, first(t, originalACL, 1)), str(2, f.GroupID), field(3, first(t, originalACL, 3)), field(4, first(t, originalACL, 4)))
 	anonymous := harness.Dial(t, f.Endpoint(harness.App).GRPC, "")
-	check := func() {
+	checkOnce := func() {
 		t.Helper()
+		checkAdditionalSurfaces(t, f, app, second, anonymous, id, model.exists, model.public)
 		for _, surface := range []string{"GetInvocation", "GetInvocationOwner"} {
 			req := lookup
 			jsonReq := map[string]any{"lookup": map[string]any{"invocationId": id}}
@@ -89,12 +49,24 @@ func TestManagementStateMachine(t *testing.T) {
 				req = ownerReq
 				jsonReq = map[string]any{"invocationId": id}
 			}
-			b, e := call(app, ui+surface, req)
+			client := app
+			if surface == "GetInvocationOwner" {
+				client = owner
+			}
+			b, e := call(client, ui+surface, req)
 			jsonReq["requestContext"] = f.Web.RequestContext(f.GroupID)
 			j, he := f.Web.RPC(surface, jsonReq)
 			if surface == "GetInvocationOwner" {
-				require.Equal(t, codes.PermissionDenied, status.Code(e))
-				require.ErrorContains(t, he, "PermissionDenied")
+				if model.exists {
+					require.NoError(t, e)
+					require.NoError(t, he)
+					require.Equal(t, f.GroupID, string(first(t, b, 2)))
+					require.Equal(t, f.GroupID, j["groupId"])
+				} else {
+					require.Equal(t, codes.Unknown, status.Code(e))
+					require.ErrorContains(t, e, "record not found")
+					require.ErrorContains(t, he, "record not found")
+				}
 				continue
 			}
 			if !model.exists {
@@ -133,6 +105,10 @@ func TestManagementStateMachine(t *testing.T) {
 		require.Len(t, objects(t, search, "invocation"), expected)
 		require.Len(t, bytesFields(t, b, 2), expected)
 		if model.exists {
+			require.Equal(t, model.public, varintField(t, first(t, first(t, first(t, b, 2), 20), 5), 1) == 1)
+			sa := objects(t, search, "invocation")[0].(map[string]any)["acl"].(map[string]any)
+			sp, _ := sa["othersPermissions"].(map[string]any)
+			require.Equal(t, model.public, sp["read"] == true)
 			require.Equal(t, id, string(first(t, first(t, b, 2), 1)))
 			require.Equal(t, id, objects(t, search, "invocation")[0].(map[string]any)["invocationId"])
 		}
@@ -142,6 +118,7 @@ func TestManagementStateMachine(t *testing.T) {
 		require.Len(t, objects(t, stats, "invocationStat"), expected)
 		require.Len(t, bytesFields(t, sb, 2), expected)
 		if model.exists {
+			require.Equal(t, uint64(1), varintField(t, first(t, sb, 2), 4))
 			require.Equal(t, "1", objects(t, stats, "invocationStat")[0].(map[string]any)["totalNumBuilds"])
 		}
 		// bb view's supported build-log read must lose access with the invocation.
@@ -157,8 +134,8 @@ func TestManagementStateMachine(t *testing.T) {
 			require.NoError(t, lhe)
 			require.Contains(t, string(first(t, lb, 4)), "management state machine")
 		} else {
-			require.Error(t, le)
-			require.Error(t, lhe)
+			require.Equal(t, codes.NotFound, status.Code(le))
+			require.ErrorContains(t, lhe, "NotFound")
 		}
 		apiReq := field(1, str(1, id))
 		b, e = call(app, "/api.v1.ApiService/GetInvocation", apiReq)
@@ -179,8 +156,10 @@ func TestManagementStateMachine(t *testing.T) {
 		_, e = call(anonymous, ui+"GetInvocation", lookup)
 		if model.exists && model.public {
 			require.NoError(t, e)
+		} else if !model.exists {
+			require.Equal(t, codes.NotFound, status.Code(e))
 		} else {
-			require.Error(t, e)
+			require.Equal(t, codes.Unauthenticated, status.Code(e))
 		}
 		for _, c := range []*harness.Clients{app, proxy} {
 			got, e := c.Read(ctx, "", d)
@@ -188,16 +167,35 @@ func TestManagementStateMachine(t *testing.T) {
 			require.Equal(t, data, got)
 		}
 	}
-	check()
-	// Exercise bb view only when the runner supplies the CLI; never inherit dispatch credentials.
-	cliPath, cliErr := exec.LookPath("bb")
-	if cliErr != nil {
-		t.Log("runner has no bb CLI; its underlying log RPC is covered")
-	}
-	cliCheck := func() {
-		if cliErr != nil {
-			return
+	check := func() {
+		start := time.Now()
+		deadline := start.Add(10 * time.Second)
+		for {
+			b, err := call(app, ui+"GetInvocation", lookup)
+			matched := false
+			if model.exists {
+				require.NoError(t, err)
+				matched = (varintField(t, first(t, first(t, first(t, b, 2), 20), 5), 1) == 1) == model.public
+			} else {
+				require.Contains(t, []codes.Code{codes.OK, codes.NotFound}, status.Code(err))
+				matched = status.Code(err) == codes.NotFound
+			}
+			if matched {
+				break
+			}
+			require.True(t, time.Now().Before(deadline), "detail failed to converge")
+			time.Sleep(50 * time.Millisecond)
 		}
+		t.Logf("detail convergence observed within %s", time.Since(start))
+		checkOnce()
+		time.Sleep(200 * time.Millisecond)
+		checkOnce()
+	}
+	check()
+	// Require bb view; never inherit dispatch credentials.
+	cliPath, cliErr := exec.LookPath("bb")
+	require.NoError(t, cliErr)
+	cliCheck := func() {
 		cc, stop := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stop()
 		cmd := exec.CommandContext(cc, cliPath, "view", id, "--target=grpc://"+f.Endpoint(harness.App).GRPC)
@@ -208,6 +206,7 @@ func TestManagementStateMachine(t *testing.T) {
 			require.True(t, strings.Contains(string(out), "management state machine"), string(out))
 		} else {
 			require.Error(t, e, string(out))
+			require.Contains(t, string(out), "NotFound")
 		}
 	}
 	cliCheck()
@@ -219,19 +218,32 @@ func TestManagementStateMachine(t *testing.T) {
 		} else {
 			wire = append(wire, field(5, nil)...)
 		}
-		_, err = call(app, ui+"UpdateInvocation", msg(str(2, id), field(3, wire)))
+		writer := app
+		if public {
+			writer = second
+		}
+		_, err = call(writer, ui+"UpdateInvocation", msg(str(2, id), field(3, wire)))
 		require.NoError(t, err)
 		model.public = public
+		start := time.Now()
+		check()
+		t.Logf("all surfaces consistent after update within %s", time.Since(start))
+		time.Sleep(200 * time.Millisecond)
 		check()
 		cliCheck()
 	}
-	_, err = call(app, ui+"DeleteInvocation", str(2, id))
+	_, err = call(second, ui+"DeleteInvocation", str(2, id))
 	require.NoError(t, err)
 	model.exists = false
 	check()
 	cliCheck()
 	_, err = call(app, ui+"DeleteInvocation", str(2, id))
 	require.Equal(t, codes.NotFound, status.Code(err))
+	check()
+	cliCheck()
+	// Re-create the same invocation ID after deletion; no old projection survives.
+	uploadID(t, f, id, []string{"management state machine\n"}, 0)
+	model.exists, model.public = true, false
 	check()
 	cliCheck()
 }

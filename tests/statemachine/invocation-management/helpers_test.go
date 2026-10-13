@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -34,14 +35,31 @@ func event(id, payload protowire.Number, identity, data []byte) []byte {
 
 func upload(t *testing.T, f *harness.Fixture, logs []string, exit int64) string {
 	t.Helper()
-	id := uuid.NewString()
+	return uploadID(t, f, uuid.NewString(), logs, exit)
+}
+
+func uploadID(t *testing.T, f *harness.Fixture, id string, logs []string, exit int64) string {
+	t.Helper()
 	now := time.Now().UnixMilli()
+	component := harness.App
+	if f.Endpoints[harness.CacheProxy] != nil {
+		component = harness.CacheProxy
+	}
+	ctxUpload, cancelUpload := context.WithTimeout(context.Background(), 15*time.Second)
+	digest, errUpload := f.Clients(component).Upload(ctxUpload, "", []byte("invocation-associated test output\n"))
+	cancelUpload()
+	require.NoError(t, errUpload)
+	artifactURL := fmt.Sprintf("bytestream://%s/blobs/%s/%d", f.Endpoint(component).GRPC, digest.Hash, digest.SizeBytes)
 	events := [][]byte{event(3, 5, nil, msg(str(1, id), num(2, now), str(3, "8.0.0"), str(4, "--color=no"), str(5, "test"), str(10, "fixture-host"), str(11, "fixture-user")))}
 	metadata := []byte{}
 	for _, kv := range [][2]string{{"REPO_URL", "https://example.invalid/conformance"}, {"COMMIT_SHA", "0123456789abcdef"}, {"BRANCH_NAME", "validation"}, {"ROLE", "CI"}, {"custom-key", "custom-value"}} {
 		metadata = append(metadata, field(1, msg(str(1, kv[0]), str(2, kv[1])))...)
 	}
-	events = append(events, event(14, 16, nil, msg(field(1, msg(str(1, "BUILD_USER"), str(2, "fixture-user"))), field(1, msg(str(1, "BUILD_HOST"), str(2, "fixture-host"))))), event(24, 26, nil, metadata), event(4, 6, str(1, "//sample:test"), nil), event(16, 18, str(1, "//sample:test"), msg(str(1, "sh_test rule"), num(2, 1), str(3, "validation"))), event(5, 8, str(1, "//sample:test"), num(1, 1)), event(8, 10, msg(str(1, "//sample:test"), num(2, 1), num(4, 1)), msg(num(5, 1), num(3, 125))), event(7, 9, str(1, "//sample:test"), msg(num(5, 1), num(1, 1), num(10, 1), num(11, 1))))
+	events = append(events, event(14, 16, nil, msg(field(1, msg(str(1, "BUILD_USER"), str(2, "fixture-user"))), field(1, msg(str(1, "BUILD_HOST"), str(2, "fixture-host"))))), event(24, 26, nil, metadata), msg(event(4, 6, str(1, "//sample:test"), nil), field(2, field(16, str(1, "//sample:test")))), event(16, 18, str(1, "//sample:test"), msg(str(1, "sh_test rule"), num(2, 1), str(3, "validation"))), event(5, 8, str(1, "//sample:test"), num(1, 1)), event(8, 10, msg(str(1, "//sample:test"), num(2, 1), num(4, 1)), msg(num(5, 1), num(3, 125), field(2, msg(str(1, "test.log"), str(2, artifactURL))))), event(7, 9, str(1, "//sample:test"), msg(num(5, 1), num(1, 1), num(10, 1), num(11, 1))))
+	// WorkspaceStatus follows configured targets, as required by target tracking.
+	workspace := events[1]
+	events = append(events[:1], events[2:]...)
+	events = append(events[:4], append([][]byte{workspace}, events[4:]...)...)
 	for i, s := range logs {
 		events = append(events, event(2, 3, num(1, int64(i)), str(1, s)))
 	}
