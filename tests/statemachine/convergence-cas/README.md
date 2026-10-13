@@ -1,77 +1,94 @@
-# Batch-written flat CAS convergence
+# CAS cross-surface state machine
 
-Target: `//tests/statemachine/convergence-cas:go_default_test`.
-Run: `bb remote test //tests/statemachine/convergence-cas/... --test_output=errors`.
+Targets: //tests/statemachine/convergence-cas:go_default_test (coverage),
+and :delete_convergence_repro (bug-tagged isolated deletion mismatch).
+Only fixture-local released v2.314.0 app/proxy containers receive component
+requests. Exact image digests are recorded in FINDING-app-delete-stale-proxy.md
+and harness test logs. The CLI is released bb 5.0.492, SHA256
+e9e996a1a01555e45433acf9432f9d40d5bda437812a830d6701fe9b09853df9.
 
-Released app and cache proxy use the harness defaults (enterprise-v2.314.0):
+## Source and surfaces
 
-- app: `gcr.io/flame-public/buildbuddy-app-enterprise@sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843`
-- proxy: `gcr.io/flame-public/buildbuddy-proxy-enterprise@sha256:dcfd8fae2d63a5dc9b05e26d30e07817a638445d9ebac504963515fcfd47c906`
+Inspected proto/{remote_execution,cache,cache_service,buildbuddy_service,resource}.proto,
+proto/api/v1/{file,service}.proto; server/{cache_server,buildbuddy_server,http/protolet},
+server/remote_cache/{directory_size,content_addressable_storage_server,byte_stream_client};
+enterprise/server/{api,content_addressable_storage_server_proxy,byte_stream_server_proxy};
+cli/download/download.go; app/service/rpc_service.ts,
+app/invocation/{cache_requests_card,invocation_action_card}.tsx and app/util/get_tree.ts.
 
-## Source enumeration
-
-Inspected the released checkout at `~/buildbuddy-src`, especially
-`proto/remote_execution.proto`, `proto/api/v1/{service,file}.proto`,
-`proto/{buildbuddy_service,cache,resource}.proto`,
-`server/remote_cache/content_addressable_storage_server`,
-`enterprise/server/content_addressable_storage_server_proxy`,
-`enterprise/server/api/api_server.go`,
-`server/buildbuddy_server/buildbuddy_server.go`,
-`server/cache_server/cache_server.go`, and `cli/download/download.go`.
-
-| Mutation | Read surfaces | Coverage |
+| Mutation | Surfaces checked after each step | Result |
 | --- | --- | --- |
-| CAS.BatchUpdateBlobs on app | app and proxy FindMissingBlobs, BatchReadBlobs, ByteStream.Read | new blobs, mixed existing/new batches, repeated identical batches |
-| CAS.BatchUpdateBlobs on proxy | same | new blobs, mixed existing/new batches, repeated identical batches |
-| Both writers | app ApiService.GetFile (gRPC and REST), GetFileRange (gRPC and REST), UI `/file/download` and `/file/view`, BuildBuddyService.GetCacheMetadata (gRPC and JSON), `bb download` | exact bytes on file reads; metadata presence for nonempty blobs; file URIs name both local peers; CLI explicitly targets each peer |
+| BatchUpdateBlobs app and proxy | Both peers FindMissingBlobs, BatchReadBlobs identity/zstd, ByteStream full/partial reads; Cache/GetMetadata after hydration; app public GetFile gRPC/REST and GetFileRange full/partial gRPC/REST; UI download/view bytes; GetCacheMetadata gRPC/JSON sizes/timestamps; peer-targeted bb download | Coverage |
+| Directory batch writes app and proxy, repeats | Above byte surfaces plus both CAS.GetTree, BuildBuddyService.GetTree gRPC and actual frontend prefixed HTTP streaming, GetTreeDirectorySizes gRPC/JSON totals/counts, both peers bb download --output_directory | Coverage once the modeled root exists |
+| ByteStream.Write app/proxy identity/zstd repeated valid writes | Same complete flat and directory projections | Coverage |
+| App compressed batch, nonempty instance | Forwarded presence and cold local metadata before any content reads; exact app/proxy bytes and metadata success after hydration | Focused variant coverage |
+| DeleteFile app after proxy write/hydration | Both presence RPCs, proxy ByteStream and batch reads, final app/proxy bytes; app recreation readback | Confirmed mismatch >20s, non-default enable_cache_delete_api flag |
 
-Batch CAS is immutable. No in-place update exists: the sequence adds new digests
-and repeats writes of identical bytes. ByteStream.Write, compressed streaming,
-DeleteFile, action cache, and metadata field semantics belong to other items.
-GetTree requires serialized Directory blobs and is not a flat blob read.
-Invocation/execution download lists expose build records, not arbitrary CAS
-presence, so they do not apply to these flat batch writes.
+The main reference model tracks initially absent payload and Directory blobs,
+plus canonical virtual empty CAS. Six alternating writer batches mix new and
+existing objects and repeat every operation. Two distinct API keys in the same
+org use different peer clients. Every accepted batch and streaming mutation
+runs the complete applicable model comparison, not only final snapshots.
+CAS is immutable: valid updates repeat identical content; changed content
+necessarily uses another digest.
 
-The reference model initially includes four absent blobs and the canonical
-empty CAS blob (logically present without a physical cache record). After each
-successful batch response, it marks precisely those blobs present. Both peers'
-batch and streaming surfaces must agree with the model within 20 seconds,
-polling every 100 ms; RPCs share a five-minute overall bound. Both present and
-not-yet-written digests are checked. Public/UI/CLI reads run before writes and after every
-operation, including repeats; missing files must return no content and a missing/unavailable error or HTTP
-404; direct CAS/range/metadata and CLI missing reads must report NotFound. Empty content is checked as bytes, not Go slice
-allocation identity. Physical metadata and positive-length ranges are checked
-only for nonempty blobs.
+Convergence is bounded to 20s, followed by four consecutive successful scans
+100ms apart. Logs report scan duration including the stability window.
+The suite preserves the last real mismatch rather than overwriting it with
+a deadline error. Presence lists reject unsolicited digests; batch response
+count, duplicate hashes, digest sizes, status, compressor and exact decoded
+bytes are checked.
 
-The runner downloads the released bb 5.0.492 Linux binary, verifies SHA256
-`e9e996a1a01555e45433acf9432f9d40d5bda437812a830d6701fe9b09853df9`, and
-removes the outer dispatch credential from its environment. Its component
-requests use only the disposable fixture key and loopback endpoint. Public
-GetFile wire-compatible protobuf wrappers avoid adding generated upstream
-bindings; range and metadata requests add documented protobuf wire fields.
+## Oracle boundaries
 
-All containers are fixture-local; no component calls go to a shared deployment.
-No harness or shared dependency changes are required.
+Proxy local metadata is NOT a remote presence oracle. Before reads, it can be
+NotFound for accepted app writes. TestColdProxyAndInstance asserts that local
+metadata remains absent for five scans over one second while forwarded
+presence immediately succeeds. Then content hydration and local metadata are
+checked separately. This explicitly measures demand-driven availability;
+successful post-hydration checks do not claim passive replication.
 
-The app pooled file reader prefers its own cache before the URI host; therefore
-public/UI reads verify the app backing state, while direct CAS/ByteStream and
-CLI reads independently verify each endpoint. The released pooled reader
-explicitly sanitizes failed reads to Unavailable (see
-`server/remote_cache/byte_stream_client/byte_stream_client.go`), including
-missing files. The test accepts this documented error mapping without treating
-it as a state divergence.
+Public/UI calls run on app. Peer URIs are tested, but the pooled reader can
+prefer app storage; these are app-backed projections, not independent proxy
+oracles. Direct peer CAS, ByteStream, metadata and CLI address each peer.
+No claim is made that app and proxy physical stored sizes or access timestamps
+must be identical. Metadata checks validate digest size and positive stored
+size/timestamps; the restored audit probe additionally checks exact small-blob
+stored sizes. Empty CAS is virtual and has no physical metadata.
 
-UI download/view absence is not an independent flat-CAS oracle: on a cache
-miss those handlers fall back to invocation blob storage and require an
-invocation ID. This item checks their exact bytes for accepted writes; absence
-is checked through the CAS, public file/range APIs, metadata, and CLI instead.
-No invocation records are fabricated to exercise that unrelated fallback.
+UI missing downloads can fall back to invocation blob storage and require an
+invocation ID; absence is instead asserted through direct/public/metadata/CLI
+surfaces. Invocation artifacts, logs, cache scorecards and execution-download
+lists need build records and do not expose arbitrary CAS mutation state.
+QueryWriteStatus is explicitly Unimplemented in the released app.
+Zip extraction and raw-JSON rendering are content-type interpretations of
+downloaded blobs; arbitrary flat payloads are not valid zip/protobuf inputs.
+DeleteFile is not registered on the cache proxy, so deletion is app-targeted.
 
-## Verification
+## Findings and validation
 
-Final targeted remote test passed in 45.5 seconds:
-https://app.buildbuddy.io/invocation/77786fa2-06b1-451f-bd31-592014480ed6
-(outer runner: https://app.buildbuddy.io/invocation/9353d677-3f93-4bce-882a-6971e83d2a3e).
-No accepted-write divergence was observed. Earlier development runs corrected
-empty-slice assertions, REST request encoding, and source-documented error and
-UI fallback expectations; they are not product findings.
+See FINDING-app-delete-stale-proxy.md for two independent remote reproductions.
+No shared harness or dependency changes, PR, or upstream report are required.
+The local auditor's original expectations and metadata/partial-range probe
+were restored from audit/convergence-cas-local; no perturbations were retained.
+
+After direct convergence, the HTTP/UI/CLI and tree projections run twice
+without an intervening mutation to detect regression beyond a single matching
+scan. Direct metadata NotFound is also checked on both peers for every modeled
+absent digest.
+
+Further source enumeration found SplitBlob/SpliceBlob (chunk-state mutations,
+not exercised here; owned by cas-chunk-state). GetChunkMapping and
+RegisterChunkMapping explicitly return Unimplemented in this release.
+This suite therefore does not claim conformance for every CAS extension RPC.
+
+Final targeted default suite passed in 165.1 seconds:
+https://app.buildbuddy.io/invocation/f775e039-6681-454f-9218-3969c708cf64
+(outer runner https://app.buildbuddy.io/invocation/3bab6b49-3763-4329-824c-bfa4e8aaa213).
+Earlier complete transport/variant run also passed:
+https://app.buildbuddy.io/invocation/89b88e0f-db71-4b9a-8d68-b4f8dd480996.
+Observed direct write convergence scans in development were 0.313–0.327s,
+including the required 300ms stability interval; each final step logs its own
+duration. This measures client-visible availability after content hydration,
+not passive replication. Cold metadata remained absent over the separate 1s
+presence-only probe.
