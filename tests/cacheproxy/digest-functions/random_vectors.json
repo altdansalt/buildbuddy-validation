@@ -1,0 +1,50 @@
+[
+  {
+    "size": 1,
+    "hash": "22f36339ae3058eeaf19a52949cfb9eb0a6bf4c21c05b6191ae4a19c8a93de4b"
+  },
+  {
+    "size": 63,
+    "hash": "2290ab1be4ca2518d008751153c1be8bc41f8df8ff2de0351b9c9113ac2b7eab"
+  },
+  {
+    "size": 64,
+    "hash": "754837b22fb94927b0579f1035c98121647da2817b95044f56efbe731b0d774e"
+  },
+  {
+    "size": 65,
+    "hash": "a2d6d03cfc8efe73ae18bbcb48059b71cdaf99b2d31e2c6d9c12a1d39ba7d9ff"
+  },
+  {
+    "size": 1023,
+    "hash": "fe66a4a74845acd62deb38caac00c60492b8c4a7b434eb4c8f0fd8ad910ce9da"
+  },
+  {
+    "size": 1024,
+    "hash": "cb81649869831326a55e9f7eb45ad991cfac555a518a55a59df8bbda8091ce3a"
+  },
+  {
+    "size": 1025,
+    "hash": "67312b9a64b76ef5c3d6ed3684b06a0fc260896ca2e26a1b091cba6019c7283e"
+  },
+  {
+    "size": 2048,
+    "hash": "fa9dcaa9f2178090dcbdc0fe76dd4aed43a019c3c72713cfcdf44f5e2b57a1c4"
+  },
+  {
+    "size": 4097,
+    "hash": "758c6f7ce34501af82e8c0ef482134a0bded2bc7d184fcfbe6ae1e181ef0b69f"
+  },
+  {
+    "size": 65537,
+    "hash": "7e80105f6b6b8ea4ccdd6cd878fde52e3b4a582ea0ab69c040261eba4c839c77"
+  },
+  {
+    "size": 131073,
+    "hash": "211cf1fd2bcf16334cbae6393d00ab2e96951a25a2c8f59461d4f201afb92670"
+  },
+  {
+    "size": 262145,
+    "hash": "f3fc70959cf00a32d6133da5dd1a47ce83497889f2ae560e8f4a2a274cef11d2"
+  }
+]
