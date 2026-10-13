@@ -43,7 +43,7 @@ Round 2 additionally covers:
 - Opt-in CDC interception and read fast path, enabled by a fixture-local,
   digest-pinned flagd v0.12.4 sidecar. Three seeded payloads traverse a writer
   proxy and a cold reader proxy, using identity/zstd writes, repeated whole reads,
-  random ranges and compressed suffixes. Positive chunk-write and remote-chunk
+  random suffixes and compressed suffixes. Positive chunk-write and remote-chunk
   read metrics prove this did not silently test only ordinary ByteStream reads.
 
 Multiple fixtures share the app fixture's owned Docker daemon using a
@@ -56,3 +56,8 @@ bridge gateway; no component requests reach any shared deployment.
 Not covered: expiry under clock skew, every experiment targeting combination,
 or a process/container crash in the middle of a read (the relay injects a gRPC
 failure deterministically).
+
+The `bug`-tagged `:cdc_bounded_read_bug_test` isolates a positive-limit read of
+an existing CDC-uploaded blob that returns `NotFound`. See
+[the finding](../../../../findings/cacheproxy-read-through-cdc-bounded-read.md)
+for both reproductions and exact images/configuration.

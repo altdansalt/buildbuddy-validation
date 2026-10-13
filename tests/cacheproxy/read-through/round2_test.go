@@ -88,7 +88,7 @@ func TestBackendFailureMidStream(t *testing.T) {
 	d, err := client.Write(ctx, instance, data, false)
 	require.NoError(t, err)
 	for attempt := 0; attempt < 2; attempt++ {
-		got, err := proxy.Read(ctx, instance, d)
+		got, err := read(ctx, proxy, d, 0, 0, false)
 		require.Equal(t, codes.Unavailable, status.Code(err))
 		require.NotEmpty(t, got)
 		require.Less(t, len(got), len(data))
