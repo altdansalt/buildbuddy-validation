@@ -8,6 +8,8 @@ go_library(
         "docker.go",
         "fixture.go",
         "images.go",
+        "lifecycle.go",
+        "readiness.go",
     ],
     importpath = "github.com/altdansalt/buildbuddy-validation/harness",
     visibility = ["//visibility:public"],

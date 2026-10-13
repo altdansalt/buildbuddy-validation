@@ -3,7 +3,8 @@
 `//harness` aliases `//harness:go_default_library`. Component tests run on the
 hosted VM using `bb remote`, with `local` and `requires-network` Bazel tags.
 The default fixture creates a Docker network, starts local Redis when starting
-an app, and starts the requested released containers. SQLite, blob storage,
+an app (the pinned Redis digest is fetched from `mirror.gcr.io` to avoid
+Docker Hub anonymous pull limits), and starts the requested released containers. SQLite, blob storage,
 Pebble and executor workspace/file cache live under each container's `/data`.
 That directory is a per-container anonymous Docker volume on local disk;
 persistence lasts for the test.
@@ -73,3 +74,49 @@ metadata (including actual image IDs), and owned-daemon logs under its unique
 subdirectory of `TEST_UNDECLARED_OUTPUTS_DIR`. Test-local keys in these outputs
 are disposable. Use Bazel test artifacts on the BuildBuddy invocation to inspect
 them. Images remain cached only when using a prestarted/shared Docker daemon.
+
+## Lifecycle and scheduling readiness
+
+Fixture lifecycle methods operate only on owned containers and preserve their
+`/data` volumes. Methods report failures through the fixture's `testing.TB`:
+
+```go
+func (f *Fixture) Stop(c Component)
+func (f *Fixture) Start(c Component) *Endpoint
+func (f *Fixture) Restart(c Component) *Endpoint
+func (f *Fixture) Kill(c Component, signal string)
+func (f *Fixture) AddExecutor(opts Options) Component
+func (f *Fixture) WaitExit(c Component, unsuccessful bool) int
+func (f *Fixture) WaitExecutionReady()
+func (f *Fixture) Logs(c Component) string
+func (f *Fixture) Exec(c Component, args ...string) string
+func (f *Fixture) CopyConfig(c Component, path string)
+```
+
+`Stop` and `Restart` allow 40 seconds for graceful drain. `Kill` sends a signal
+without waiting; use `WaitExit` to await termination. `Start` and `Restart`
+refresh published ports in the existing Endpoint object and wait for HTTP
+readiness. Recreate gRPC clients afterwards. The app's WebSession follows the
+refreshed HTTP endpoint while preserving its cookies and local group/key.
+Methods are intended for sequential test use, not concurrent fixture mutation.
+
+`AddExecutor` returns an independent component ID usable with all lifecycle
+methods. Its nil Images, Config, Args and DockerArgs maps inherit the fixture's
+options; supplied maps replace those maps for the new executor. It uses the
+same local app target and network, a unique config file and a fresh data volume,
+and is automatically removed during cleanup.
+
+Set `Options.ExpectStartupFailure[component] = true` to wait for a nonzero exit
+instead of readiness during initial startup (including an added executor).
+A timeout or successful exit fails the test. Inspect `Logs`, replace a stopped
+container's configuration with `CopyConfig`, then `Start` it to test recovery.
+An expected-failure app skips auth provisioning; dependent components must be
+omitted or independently configured.
+
+For an app + executor fixture with auth bootstrap, `Start` also waits for a real
+uncached `/bin/true` action to complete. This exercises app execution RPCs,
+internal scheduler dispatch, executor registration and result delivery, rather
+than relying on HTTP health alone. It requires the default bare runner. Fixtures
+with `SkipAuthBootstrap` skip this action; `WaitExecutionReady` can be called
+explicitly after installing an execution-capable local key. After lifecycle
+changes, call `WaitExecutionReady` when the test needs scheduling readiness.
