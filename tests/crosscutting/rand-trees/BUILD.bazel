@@ -4,7 +4,10 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["trees_test.go"],
+    srcs = [
+        "concurrent_test.go",
+        "trees_test.go",
+    ],
     tags = [
         "local",
         "requires-network",
