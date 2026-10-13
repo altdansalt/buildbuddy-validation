@@ -41,3 +41,7 @@ Non-default flags: `--enable_cache_delete_api=true` enables the deletion API; `-
 Source anchors: `proto/{cache,remote_execution}.proto`, `server/remote_cache/content_addressable_storage_server/` (cached tree lookup/write), `server/remote_cache/directory_size/`, `server/buildbuddy_server/buildbuddy_server.go`, `app/util/get_tree.ts`, `app/invocation/invocation_action_card.tsx`, `app/service/rpc_service.ts`, and `server/http/protolet/`.
 
 The target is tagged `bug` and intentionally fails the desired invariant. Default CI excludes it. Findings stay in this directory as requested; no upstream report or PR was opened.
+
+## Round 2 reruns
+
+Two further invocations (each two fresh fixtures) reproduced it: https://app.buildbuddy.io/invocation/3396e2b7-20b1-42da-a05c-1e9a3a34c24f and https://app.buildbuddy.io/invocation/700102bc-086b-415b-96f6-085f03ef6e5b (stale for the whole 5s window each time; not shown to be permanent). Depends on non-default `--cache.tree_cache_write_probability=1` (default 0.01).

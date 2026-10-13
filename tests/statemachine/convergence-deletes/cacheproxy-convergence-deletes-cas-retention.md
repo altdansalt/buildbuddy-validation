@@ -37,3 +37,7 @@ proxy FindMissing says absent but ByteStream still serves deleted bytes
 Only non-default flag is the app's `--enable_cache_delete_api=true`. Proxy read/revalidation settings are defaults. Source inspection of `enterprise/server/{content_addressable_storage_server_proxy,byte_stream_server_proxy}/` confirms local-first immutable reads and authoritative default FindMissing forwarding, with no app DeleteFile invalidation propagation. This rules out namespace, authentication, or unsuccessful deletion errors.
 
 No shared harness edits or external deployments. No source-built components, fault injection, or upstream report. This is recorded as a confirmed observed consistency gap, not an additional advertised-contract defect.
+
+## Round 2 reruns
+
+Reproduced again in https://app.buildbuddy.io/invocation/3396e2b7-20b1-42da-a05c-1e9a3a34c24f and https://app.buildbuddy.io/invocation/700102bc-086b-415b-96f6-085f03ef6e5b (proxy kept serving bytes for the full 5s window, ~5.06s; default config plus the delete API flag).
