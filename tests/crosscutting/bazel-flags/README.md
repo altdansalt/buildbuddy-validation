@@ -79,3 +79,8 @@ Validation: [focused eviction pass](https://app.buildbuddy.io/invocation/3a62c19
 (all six combinations, 178.9 seconds). Setup failures were resolved by using a
 shell-bearing volume helper for the distroless app and refreshing published
 ports after restart. No product defect was observed.
+
+[Full round 2 suite](https://app.buildbuddy.io/invocation/76eba84a-d69c-4aa3-b3c5-e0a270830d76)
+passed with `bb remote test //tests/crosscutting/bazel-flags/... --config=nobug`:
+four targets, three seeds with six combinations each, restart coverage, and all
+six eviction/download-mode combinations (551 seconds overall).
