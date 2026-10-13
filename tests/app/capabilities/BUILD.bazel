@@ -46,3 +46,12 @@ go_test(
     tags = ["bug", "local", "requires-network"],
     deps = DEPS,
 )
+
+go_test(
+    name = "small_splice_bug_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "small_splice_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = DEPS,
+)

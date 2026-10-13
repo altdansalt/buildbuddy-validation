@@ -199,7 +199,7 @@ func TestSeededSplitSpliceCapabilities(t *testing.T) {
 	t.Logf("cache capabilities: %s", cc)
 	for i := 0; i < 6; i++ {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
-			data := make([]byte, 1+rng.Intn(2<<20))
+			data := make([]byte, (2<<20)+1+rng.Intn(1<<20))
 			_, e := rng.Read(data)
 			require.NoError(t, e)
 			instance := fmt.Sprintf("split-property/%d", i)
