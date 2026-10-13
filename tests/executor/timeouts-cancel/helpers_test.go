@@ -22,7 +22,19 @@ func upload(t *testing.T, ctx context.Context, c *harness.Clients, script string
 	root, err := c.UploadProto(ctx, instance, &repb.Directory{})
 	require.NoError(t, err)
 	platform := []*repb.Platform_Property{{Name: "Arch", Value: "amd64"}, {Name: "OSFamily", Value: "linux"}, {Name: "workload-isolation-type", Value: "none"}}
-	platform = append(platform, props...)
+	for _, prop := range props {
+		found := false
+		for i, existing := range platform {
+			if existing.Name == prop.Name {
+				platform[i] = prop
+				found = true
+				break
+			}
+		}
+		if !found {
+			platform = append(platform, prop)
+		}
+	}
 	sort.Slice(platform, func(i, j int) bool { return platform[i].Name < platform[j].Name })
 	cmd, err := c.UploadProto(ctx, instance, &repb.Command{Arguments: []string{"/bin/sh", "-c", script}, Platform: &repb.Platform{Properties: platform}})
 	require.NoError(t, err)
@@ -78,7 +90,7 @@ func startFixture(t *testing.T, opts harness.Options) *harness.Fixture {
 			require.NotContains(t, logs, "panic:", "%s container panicked", component)
 			require.NotContains(t, logs, "fatal error:", "%s runtime failed", component)
 			for _, line := range strings.Split(logs, "\n") {
-				if strings.Contains(line, "Sending graceful termination signal") || strings.Contains(line, "Command execution returned error") || strings.Contains(line, "Failed to kill process tree") {
+				if strings.Contains(line, "graceful termination signal") || strings.Contains(line, "Command execution returned error") || strings.Contains(line, "Failed to kill process tree") || strings.Contains(line, "Created invocation") || strings.Contains(line, "Cancelling") || strings.Contains(line, "Discarding anonymous") || strings.Contains(line, "Voiding EventChannel") {
 					t.Logf("%s: %s", component, line)
 				}
 			}
