@@ -3,162 +3,39 @@ package userkeys
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/altdansalt/buildbuddy-validation/harness"
 	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/encoding/protowire"
 )
 
-// Wire field numbers are from released proto/{api_key,context}.proto and
-// proto/api/v1/api_key.proto. No BuildBuddy generated dependency is needed.
-type codec struct{}
-
-func (codec) Name() string                    { return "proto" }
-func (codec) Marshal(v any) ([]byte, error)   { return v.([]byte), nil }
-func (codec) Unmarshal(b []byte, v any) error { *v.(*[]byte) = append([]byte(nil), b...); return nil }
-func str(b []byte, n int, s string) []byte {
-	return protowire.AppendString(protowire.AppendTag(b, protowire.Number(n), protowire.BytesType), s)
-}
-func num(b []byte, n int, v uint64) []byte {
-	return protowire.AppendVarint(protowire.AppendTag(b, protowire.Number(n), protowire.VarintType), v)
-}
-
-type fields map[int][][]byte
-
-func parse(b []byte) fields {
-	f := fields{}
-	for len(b) > 0 {
-		n, typ, k := protowire.ConsumeTag(b)
-		if k < 0 {
-			panic("invalid response tag")
-		}
-		b = b[k:]
-		var v []byte
-		switch typ {
-		case protowire.BytesType:
-			v, k = protowire.ConsumeBytes(b)
-		case protowire.VarintType:
-			var x uint64
-			x, k = protowire.ConsumeVarint(b)
-			v = []byte{byte(x)}
-		default:
-			k = protowire.ConsumeFieldValue(n, typ, b)
-		}
-		if k < 0 {
-			panic("invalid response field")
-		}
-		f[int(n)] = append(f[int(n)], v)
-		b = b[k:]
-	}
-	return f
-}
-func (f fields) one(n int) string {
-	if len(f[n]) == 0 {
-		return ""
-	}
-	return string(f[n][0])
-}
-func rpc(c *harness.Clients, method string, b []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	var out []byte
-	err := c.Conn.Invoke(ctx, method, b, &out, grpc.ForceCodec(codec{}))
-	return out, err
-}
-
-const ui = "/buildbuddy.service.BuildBuddyService/"
-
-type key struct {
-	ID, Value, Label string
-	Caps             []int
-	Visibility       []int
-	Visible          bool
-	Alive            bool
-}
-
-func must(t *testing.T, err error) {
-	t.Helper()
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-func fromWire(b []byte) key {
-	f := parse(b)
-	k := key{ID: f.one(1), Value: f.one(2), Label: f.one(3), Alive: true, Visible: f.one(5) == "\x01"}
-	for _, v := range f[10] {
-		for _, x := range v {
-			k.Visibility = append(k.Visibility, int(x))
-		}
-	}
-	for _, v := range f[4] {
-		for _, x := range v {
-			k.Caps = append(k.Caps, int(x))
-		}
-	}
-	sort.Ints(k.Caps)
-	return k
-}
-func fromJSON(m map[string]any) key {
-	k := key{Alive: true}
-	k.ID, _ = m["id"].(string)
-	k.Value, _ = m["value"].(string)
-	k.Label, _ = m["label"].(string)
-	k.Visible, _ = m["visibleToDevelopers"].(bool)
-	if a, ok := m["visibility"].([]any); ok {
-		for _, v := range a {
-			if v == "VISIBLE_TO_GROUP_ADMINS" || v == float64(2) {
-				k.Visibility = append(k.Visibility, 2)
-			} else {
-				k.Visibility = append(k.Visibility, -1)
-			}
-		}
-	}
-	if a, ok := m["capability"].([]any); ok {
-		for _, v := range a {
-			switch v {
-			case "CACHE_WRITE":
-				k.Caps = append(k.Caps, 1)
-			case "CAS_WRITE":
-				k.Caps = append(k.Caps, 4)
-			default:
-				if n, ok := v.(float64); ok {
-					k.Caps = append(k.Caps, int(n))
-				}
-			}
-		}
-	}
-	sort.Ints(k.Caps)
-	return k
-}
-func compare(t *testing.T, want, got key, secret bool) {
-	t.Helper()
-	if got.Visible || !reflect.DeepEqual(got.Visibility, []int{2}) {
-		t.Fatalf("unexpected user-key visibility: %v developer=%v", got.Visibility, got.Visible)
-	}
-	if got.ID != want.ID || got.Label != want.Label || !reflect.DeepEqual(got.Caps, want.Caps) {
-		t.Fatalf("state mismatch: id=%s label=%q caps=%v; want id=%s label=%q caps=%v", got.ID, got.Label, got.Caps, want.ID, want.Label, want.Caps)
-	}
-	if secret && got.Value != want.Value {
-		t.Fatal("single-key read changed secret")
-	}
-	if !secret && got.Value != "" {
-		t.Fatal("list leaked secret")
-	}
-}
-
 func TestUserKeyStateMachine(t *testing.T) {
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}, Config: map[harness.Component]harness.Config{harness.App: {"app": harness.Config{"user_owned_keys_enabled": true}, "auth": harness.Config{"api_key_group_cache_ttl": "1s"}}, harness.CacheProxy: {"auth": harness.Config{"remote": harness.Config{"jwt_cache_ttl": "1s"}}}}})
+	for _, path := range []string{"ui-grpc", "public-grpc", "public-http"} {
+		t.Run(path, func(t *testing.T) { runMachine(t, path) })
+	}
+}
+
+func runMachine(t *testing.T, creationPath string) {
+	startedAt := time.Now().Add(-time.Second)
+	creationTimes := map[string]time.Time{}
+	sslCfg, sslDocker, rootCA := certificateConfig(t)
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.CacheProxy}, DockerArgs: map[harness.Component][]string{harness.App: sslDocker}, Config: map[harness.Component]harness.Config{harness.App: {"ssl": sslCfg, "app": harness.Config{"user_owned_keys_enabled": true}, "auth": harness.Config{"api_key_group_cache_ttl": "1s"}}, harness.CacheProxy: {"auth": harness.Config{"remote": harness.Config{"jwt_cache_ttl": "1s"}}}}})
 	_, err := f.Web.RPC("UpdateGroup", map[string]any{"requestContext": f.Web.RequestContext(f.GroupID), "id": f.GroupID, "name": "user-key-state-machine", "urlIdentifier": "user-key-state-machine", "userOwnedKeysEnabled": true})
 	must(t, err)
 	user, _ := f.Web.UserID["id"].(string)
@@ -167,16 +44,23 @@ func TestUserKeyStateMachine(t *testing.T) {
 	}
 	admin := f.Web.CreateAPIKey(t, f.GroupID, "local-admin", []string{"ORG_ADMIN", "CACHE_WRITE"})
 	c := harness.Dial(t, f.Endpoint(harness.App).GRPC, admin)
-	rc := str(nil, 2, f.GroupID)
+	rc := str(str(nil, 1, string(str(nil, 1, user))), 2, f.GroupID)
 	base := str(nil, 1, string(rc))
 	webRC := f.Web.RequestContext(f.GroupID)
-	model := map[string]key{}
+	anchorResponse, e := rpc(c, ui+"CreateUserApiKey", num(str(str(base, 6, user), 3, "setup-reader"), 4, 1))
+	must(t, e)
+	anchor := fromWire(parse(anchorResponse)[2][0])
+	setupClient := harness.Dial(t, f.Endpoint(harness.App).GRPC, anchor.Value)
+	model := map[string]key{anchor.ID: anchor}
 	check := func() {
 		b, e := rpc(c, ui+"GetUserApiKeys", str(base, 3, user))
 		must(t, e)
 		listed := map[string]key{}
 		for _, v := range parse(b)[2] {
 			k := fromWire(v)
+			if _, duplicate := listed[k.ID]; duplicate {
+				t.Fatal("duplicate gRPC list ID")
+			}
 			listed[k.ID] = k
 		}
 		res, e := f.Web.RPC("GetUserApiKeys", map[string]any{"requestContext": webRC, "userId": user})
@@ -185,6 +69,9 @@ func TestUserKeyStateMachine(t *testing.T) {
 		if a, ok := res["apiKey"].([]any); ok {
 			for _, v := range a {
 				k := fromJSON(v.(map[string]any))
+				if _, duplicate := web[k.ID]; duplicate {
+					t.Fatal("duplicate HTTP list ID")
+				}
 				web[k.ID] = k
 			}
 		}
@@ -204,18 +91,97 @@ func TestUserKeyStateMachine(t *testing.T) {
 				}
 			}
 		}
+		{
+			res, e := f.Web.RPC("GetBazelConfig", map[string]any{"requestContext": webRC, "host": "app", "protocol": "http:", "includeCertificate": true})
+			must(t, e)
+			gb, e := rpc(setupClient, ui+"GetBazelConfig", num(str(str(base, 2, "app"), 3, "http:"), 4, 1))
+			must(t, e)
+			grpcSetup := map[string]key{}
+			for _, credential := range parse(gb)[4] {
+				raw := []byte(parse(credential).one(1))
+				item := fromWire(raw)
+				if _, owned := model[item.ID]; owned {
+					if parse(raw).one(6) != "\x01" {
+						t.Fatal("gRPC setup lost user ownership")
+					}
+					if _, duplicate := grpcSetup[item.ID]; duplicate {
+						t.Fatal("duplicate setup ID")
+					}
+					grpcSetup[item.ID] = item
+					cert := parse([]byte(parse(credential).one(2)))
+					checkCertificate(t, rootCA, item.ID, cert.one(1), cert.one(2))
+				}
+			}
+			setup := map[string]key{}
+			if a, ok := res["credential"].([]any); ok {
+				for _, v := range a {
+					m := v.(map[string]any)["apiKey"].(map[string]any)
+					k := fromJSON(m)
+					if _, owned := model[k.ID]; owned {
+						if m["userOwned"] != true {
+							t.Fatal("setup lost user ownership")
+						}
+						setup[k.ID] = k
+						cert := v.(map[string]any)["certificate"].(map[string]any)
+						checkCertificate(t, rootCA, k.ID, cert["cert"].(string), cert["key"].(string))
+					}
+				}
+			}
+			for id, k := range model {
+				if k.Alive {
+					// Setup credentials intentionally omit capabilities and secrets.
+					k.Caps = nil
+					compare(t, k, setup[id], false)
+					compare(t, k, grpcSetup[id], false)
+				} else if _, ok := grpcSetup[id]; ok {
+					t.Fatal("deleted key still in grpc setup")
+				} else if _, ok := setup[id]; ok {
+					t.Fatal("deleted key still in setup credentials")
+				}
+			}
+		}
 		alive := 0
 		for id, k := range model {
 			if k.Alive {
 				alive++
 				compare(t, k, listed[id], false)
 				compare(t, k, web[id], false)
+				metadata := listed[id]
+				if metadata.CreatedAt.Before(startedAt) || metadata.CreatedAt.After(time.Now().Add(time.Second)) {
+					t.Fatalf("creation timestamp outside mutation window: %s", metadata.CreatedAt)
+				}
+				if !metadata.CreatedAt.Equal(web[id].CreatedAt) || metadata.CreatedBy != web[id].CreatedBy {
+					t.Fatal("creation metadata differs between grpc and HTTP")
+				}
+				if metadata.CreatedBy != "" {
+					t.Fatal("org-key mutation attributed to a user")
+				}
+				if original, ok := creationTimes[id]; ok {
+					if !original.Equal(metadata.CreatedAt) {
+						t.Fatal("update changed creation timestamp")
+					}
+				} else {
+					creationTimes[id] = metadata.CreatedAt
+				}
+
 			} else {
 				if _, ok := listed[id]; ok {
 					t.Fatal("deleted key still listed")
 				}
 				if _, ok := web[id]; ok {
 					t.Fatal("deleted key still web-listed")
+				}
+			}
+			{
+				b, e := rpc(c, ui+"GetApiKey", str(base, 2, id))
+				w, we := f.Web.RPC("GetApiKey", map[string]any{"requestContext": webRC, "apiKeyId": id})
+				if k.Alive {
+					must(t, e)
+					must(t, we)
+					compare(t, k, fromWire(parse(b)[2][0]), true)
+					compare(t, k, fromJSON(w["apiKey"].(map[string]any)), true)
+				} else if status.Code(e) != codes.NotFound || (we == nil || !strings.Contains(we.Error(), "NotFound")) {
+					t.Fatalf("missed GetApiKey deletion surface grpc=%v http=%v", e, we)
 				}
 			}
 			b, e := rpc(c, ui+"GetUserApiKey", str(base, 2, id))
@@ -225,14 +191,62 @@ func TestUserKeyStateMachine(t *testing.T) {
 				must(t, we)
 				compare(t, k, fromWire(parse(b)[2][0]), true)
 				compare(t, k, fromJSON(wr["apiKey"].(map[string]any)), true)
+				for _, method := range []string{"GetApiKey", "GetUserApiKey"} {
+					cb, e := rpc(c, ui+method, num(str(base, 2, id), 3, 1))
+					must(t, e)
+					certFields := parse([]byte(parse([]byte(parse(cb).one(2))).one(8)))
+					checkCertificate(t, rootCA, id, certFields.one(1), certFields.one(2))
+					cw, e := f.Web.RPC(method, map[string]any{"requestContext": webRC, "apiKeyId": id, "includeCertificate": true})
+					must(t, e)
+					certificate := cw["apiKey"].(map[string]any)["certificate"].(map[string]any)
+					checkCertificate(t, rootCA, id, certificate["cert"].(string), certificate["key"].(string))
+				}
+
 			} else {
-				if status.Code(e) != codes.NotFound || we == nil {
+				if status.Code(e) != codes.NotFound || (we == nil || !strings.Contains(we.Error(), "NotFound")) {
 					t.Fatalf("deleted key read: grpc=%v web=%v", e, we)
 				}
 			}
 		}
 		if len(listed) != alive || len(web) != alive {
 			t.Fatalf("list sizes grpc=%d web=%d model=%d", len(listed), len(web), alive)
+		}
+	}
+
+	cliDir := t.TempDir()
+	cliPath := filepath.Join(cliDir, "bb")
+	cliHTTP := &http.Client{Timeout: 2 * time.Minute}
+	binaryResponse, e := cliHTTP.Get("https://github.com/buildbuddy-io/bazel/releases/download/5.0.492/bazel-5.0.492-linux-x86_64")
+	must(t, e)
+	binary, e := io.ReadAll(io.LimitReader(binaryResponse.Body, 100<<20))
+	binaryResponse.Body.Close()
+	must(t, e)
+	if binaryResponse.StatusCode != 200 || fmt.Sprintf("%x", sha256.Sum256(binary)) != "e9e996a1a01555e45433acf9432f9d40d5bda437812a830d6701fe9b09853df9" {
+		t.Fatal("CLI download/checksum mismatch")
+	}
+	must(t, os.WriteFile(cliPath, binary, 0755))
+	cliRepo := filepath.Join(cliDir, "repo")
+	must(t, os.Mkdir(cliRepo, 0755))
+	runCLICommand := func(program string, args ...string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, program, args...)
+		cmd.Dir = cliRepo
+		// Do not inherit dispatch credentials or worker git configuration.
+		cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + cliDir, "GIT_CONFIG_GLOBAL=/dev/null"}
+		return cmd.Run()
+	}
+	must(t, runCLICommand("git", "init", "--quiet"))
+	cliCheck := func(k key, live bool) {
+		must(t, runCLICommand("git", "config", "buildbuddy.api-key", k.Value))
+		e := runCLICommand(cliPath, "login", "--check", "--target=grpc://"+f.Endpoint(harness.App).GRPC, "--url="+f.Endpoint(harness.App).HTTP)
+		if live {
+			must(t, e)
+		} else {
+			exit, ok := e.(*exec.ExitError)
+			if !ok || exit.ExitCode() != 1 {
+				t.Fatalf("deleted CLI login: %v", e)
+			}
 		}
 	}
 	probeSequence := 0
@@ -244,7 +258,9 @@ func TestUserKeyStateMachine(t *testing.T) {
 			}
 		}
 		readers := []*harness.Clients{f.Clients(harness.App), f.Clients(harness.CacheProxy)}
-		deadline := time.Now().Add(20 * time.Second)
+		started := time.Now()
+		stable := 0
+		deadline := started.Add(20 * time.Second)
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -257,14 +273,45 @@ func TestUserKeyStateMachine(t *testing.T) {
 			if len(r.Responses) != 1 || r.Responses[0].GetStatus().GetCode() != 0 {
 				t.Fatal("valid CAS write failed")
 			}
+			streamPayload := append([]byte("stream-"), payload...)
+			streamDigest, e := client.Upload(ctx, "", streamPayload)
+			must(t, e)
 			ad := harness.Digest(append([]byte("action-"), payload...))
 			_, e = client.AC.UpdateActionResult(ctx, &repb.UpdateActionResultRequest{ActionDigest: ad, ActionResult: &repb.ActionResult{StdoutRaw: payload}})
 			must(t, e)
 			converged := true
+			md := str(nil, 1, string(str(str(nil, 1, "bazel"), 2, "7.0.0")))
+			capCtx := metadata.AppendToOutgoingContext(ctx, "build.bazel.remote.execution.v2.requestmetadata-bin", string(md))
+			advertised, e := client.Capabilities.GetCapabilities(capCtx, &repb.GetCapabilitiesRequest{})
+			must(t, e)
+			if advertised.GetCacheCapabilities().GetActionCacheUpdateCapabilities().GetUpdateEnabled() != wantAC {
+				converged = false
+			}
+
 			for _, reader := range readers {
 				missing, e := reader.CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{BlobDigests: []*repb.Digest{d}})
 				must(t, e)
 				if (len(missing.MissingBlobDigests) == 0) != wantCAS {
+					converged = false
+				}
+				streamed, e := reader.Read(ctx, "", streamDigest)
+				if wantCAS {
+					if e != nil || !bytes.Equal(streamed, streamPayload) {
+						converged = false
+					}
+				} else if status.Code(e) != codes.NotFound {
+					converged = false
+				}
+				batch, e := reader.CAS.BatchReadBlobs(ctx, &repb.BatchReadBlobsRequest{Digests: []*repb.Digest{d}})
+				must(t, e)
+				if len(batch.Responses) != 1 {
+					t.Fatal("invalid batch read response")
+				}
+				if wantCAS {
+					if batch.Responses[0].GetStatus().GetCode() != 0 || !bytes.Equal(batch.Responses[0].Data, payload) {
+						converged = false
+					}
+				} else if batch.Responses[0].GetStatus().GetCode() != int32(codes.NotFound) {
 					converged = false
 				}
 				ar, e := reader.AC.GetActionResult(ctx, &repb.GetActionResultRequest{ActionDigest: ad, InlineStdout: true})
@@ -277,7 +324,38 @@ func TestUserKeyStateMachine(t *testing.T) {
 				}
 			}
 			cancel()
+			if component == harness.App {
+				jwtResponse, e := rpc(client, "/auth.AuthService/Authenticate", nil)
+				must(t, e)
+				parts := strings.Split(parse(jwtResponse).one(1), ".")
+				if len(parts) != 3 {
+					t.Fatal("invalid auth JWT")
+				}
+				body, e := base64.RawURLEncoding.DecodeString(parts[1])
+				must(t, e)
+				var claims map[string]any
+				must(t, json.Unmarshal(body, &claims))
+				if claims["user_id"] != user || claims["group_id"] != f.GroupID || claims["api_key_id"] != k.ID {
+					t.Fatalf("JWT identity mismatch: %v", claims)
+				}
+				var caps []int
+				if values, ok := claims["capabilities"].([]any); ok {
+					for _, v := range values {
+						caps = append(caps, int(v.(float64)))
+					}
+				}
+				sort.Ints(caps)
+				if !reflect.DeepEqual(caps, k.Caps) {
+					converged = false
+				}
+			}
 			if converged {
+				stable++
+			} else {
+				stable = 0
+			}
+			if stable >= 3 {
+				t.Logf("%s capabilities %v converged and stable in %s", component, k.Caps, time.Since(started))
 				return
 			}
 			if time.Now().After(deadline) {
@@ -298,7 +376,9 @@ func TestUserKeyStateMachine(t *testing.T) {
 					t.Fatal("key authenticated as wrong owner")
 				}
 			}
-			deadline := time.Now().Add(20 * time.Second)
+			started := time.Now()
+			stable := 0
+			deadline := started.Add(20 * time.Second)
 			ticker := time.NewTicker(100 * time.Millisecond)
 			defer ticker.Stop()
 			for {
@@ -306,6 +386,12 @@ func TestUserKeyStateMachine(t *testing.T) {
 				_, e := client.CAS.FindMissingBlobs(ctx, &repb.FindMissingBlobsRequest{BlobDigests: []*repb.Digest{harness.Digest([]byte("auth-probe"))}})
 				cancel()
 				if live && e == nil || !live && (status.Code(e) == codes.Unauthenticated || status.Code(e) == codes.PermissionDenied) {
+					stable++
+				} else {
+					stable = 0
+				}
+				if stable >= 3 {
+					t.Logf("%s live=%v converged and stable in %s", component, live, time.Since(started))
 					break
 				}
 				if time.Now().After(deadline) {
@@ -313,13 +399,37 @@ func TestUserKeyStateMachine(t *testing.T) {
 				}
 				<-ticker.C
 			}
+			if !live && component == harness.App {
+				_, e := rpc(client, ui+"GetUser", base)
+				if status.Code(e) != codes.Unauthenticated && status.Code(e) != codes.PermissionDenied {
+					t.Fatalf("deleted GetUser accepted: %v", e)
+				}
+				_, e = rpc(client, "/auth.AuthService/Authenticate", nil)
+				if status.Code(e) != codes.Unauthenticated && status.Code(e) != codes.PermissionDenied {
+					t.Fatalf("deleted Authenticate accepted: %v", e)
+				}
+			}
+			if component == harness.App {
+				cliCheck(k, live)
+			}
 			if live {
 				capabilityCheck(client, component, k)
 			}
 		}
 	}
-	check()
-	for _, path := range []string{"ui-grpc", "public-grpc", "public-http"} {
+	checkAll := func() {
+		check()
+		ids := make([]string, 0, len(model))
+		for id := range model {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			auth(model[id], model[id].Alive)
+		}
+	}
+	checkAll()
+	for _, path := range []string{creationPath} {
 		// Same-label repeated creates are valid distinct keys, not idempotent creates.
 		for repeat := 0; repeat < 2; repeat++ {
 			label := path
@@ -371,13 +481,14 @@ func TestUserKeyStateMachine(t *testing.T) {
 				t.Fatal("create response did not match requested label or expected capabilities")
 			}
 			model[k.ID] = k
-			check()
-			auth(k, true)
+			checkAll()
 		}
 	}
 	ids := make([]string, 0, len(model))
 	for id := range model {
-		ids = append(ids, id)
+		if id != anchor.ID {
+			ids = append(ids, id)
+		}
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
@@ -397,16 +508,27 @@ func TestUserKeyStateMachine(t *testing.T) {
 				_, e := rpc(c, ui+"UpdateUserApiKey", req)
 				must(t, e)
 				model[id] = k
-				check()
-				auth(k, true)
+				checkAll()
 			}
 		}
 		_, e := rpc(c, ui+"DeleteUserApiKey", str(base, 2, id))
 		must(t, e)
 		k.Alive = false
 		model[id] = k
-		check()
-		auth(k, false)
+		checkAll()
+		recreatedResponse, e := rpc(c, ui+"CreateUserApiKey", num(str(str(base, 6, user), 3, k.Label), 4, 1))
+		must(t, e)
+		recreated := fromWire(parse(recreatedResponse)[2][0])
+		if recreated.ID == id || recreated.Value == k.Value {
+			t.Fatal("re-create reused identity or secret")
+		}
+		model[recreated.ID] = recreated
+		checkAll()
+		_, e = rpc(c, ui+"DeleteUserApiKey", str(base, 2, recreated.ID))
+		must(t, e)
+		recreated.Alive = false
+		model[recreated.ID] = recreated
+		checkAll()
 	}
 	t.Logf("validated %d keys across three creation transports", len(model))
 }
