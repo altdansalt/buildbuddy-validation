@@ -31,3 +31,20 @@ Push and FetchDirectory explicitly return UNIMPLEMENTED in this release. The
 regression target documents that capability boundary; it does not report optional
 Push support as a conformance defect. Concurrent requests verify successful
 content and CAS availability without requiring an optional coalescing policy.
+
+Round 2 adds the `followups` target:
+
+- Seeded payload (seed `731902`) checks SHA256 SRI cache reuse and conversion
+  into SHA1/SHA512 CAS entries, including digest, size, digest-function response,
+  ByteStream readback and absence of additional origin requests.
+- Local HTTP 307 redirects preserve URL-specific headers; per-URL overrides
+  take precedence over shared headers and successive requests remain independent.
+- Four overlapping checksum-identical fetches hold the local origin open. The
+  first caller is cancelled; the three remaining callers must finish and read
+  the expected CAS content. A short overlap window lets their RPCs reach the app;
+  origin hit counts are not asserted because coalescing is optional.
+
+The existing `origin_status_bug` and `freshness_bug` sources are unchanged.
+Round 2 observed no additional suspected defects on the pinned image.
+
+Validation: [non-bug suite](https://app.buildbuddy.io/invocation/44352f89-a19a-40ec-9796-47cb5fda18a5).
