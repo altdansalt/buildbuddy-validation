@@ -3,6 +3,7 @@ package execution_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -116,7 +117,7 @@ func TestWaitUnknownAndExpiredMonitoredOperations(t *testing.T) {
 	replay, err := c.Execution.WaitExecution(ctx, &repb.WaitExecutionRequest{Name: first.Name})
 	require.NoError(t, err)
 	finish(t, replay, first.Name, d)
-	key := "taskStatusStream/{" + first.Name + "}"
+	key := "monitoredPubSub/taskStatusStream/{" + first.Name + "}"
 	redis := f.ID + "-redis"
 	require.Equal(t, "1", strings.TrimSpace(dockerFixture(t, f, "exec", redis, "redis-cli", "EXISTS", key)))
 	require.Equal(t, "1", strings.TrimSpace(dockerFixture(t, f, "exec", redis, "redis-cli", "PEXPIRE", key, "1")))
@@ -128,7 +129,17 @@ func TestWaitUnknownAndExpiredMonitoredOperations(t *testing.T) {
 		waitCtx, stop := context.WithTimeout(ctx, 5*time.Second)
 		w, err := c.Execution.WaitExecution(waitCtx, &repb.WaitExecutionRequest{Name: name})
 		if err == nil {
-			_, err = w.Recv()
+			op, recvErr := w.Recv()
+			err = recvErr
+			if err == nil {
+				require.True(t, op.Done)
+				r := &repb.ExecuteResponse{}
+				require.NoError(t, op.GetResponse().UnmarshalTo(r))
+				require.EqualValues(t, codes.NotFound, r.GetStatus().GetCode())
+				_, err = w.Recv()
+				require.Equal(t, io.EOF, err)
+				err = status.Error(codes.NotFound, "terminal operation reports missing stream")
+			}
 		}
 		stop()
 		require.Equal(t, codes.NotFound, status.Code(err), "name=%s err=%v", name, err)
@@ -159,7 +170,7 @@ func TestSchedulerPriorityOrdering(t *testing.T) {
 	}
 	var queued []pending
 	for _, p := range priorities {
-		d := uploadAction(t, c, ctx, fmt.Sprintf("printf '%d\\n' >> /priority-gate/order", p), true)
+		d := uploadAction(t, c, ctx, fmt.Sprintf("printf '%%s\\n' '%d' >> /priority-gate/order", p), true)
 		s, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: "streams", ActionDigest: d, ExecutionPolicy: &repb.ExecutionPolicy{Priority: p}})
 		require.NoError(t, err)
 		op, err := s.Recv()
@@ -171,7 +182,7 @@ func TestSchedulerPriorityOrdering(t *testing.T) {
 	require.Eventually(t, func() bool {
 		logs := dockerFixture(t, f, "logs", f.Endpoint(harness.Executor).Container)
 		for _, q := range queued {
-			if !strings.Contains(logs, q.name) {
+			if !strings.Contains(logs, fmt.Sprintf("Added task %q to pq.", q.name)) {
 				return false
 			}
 		}
@@ -181,7 +192,7 @@ func TestSchedulerPriorityOrdering(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(gate, "release"), nil, 0666))
 	finish(t, b, initial.Name, blocker)
 	for _, q := range queued {
-		finish(t, q.s, q.name, q.d)
+		require.Zero(t, finish(t, q.s, q.name, q.d).Result.ExitCode)
 	}
 	order, err := os.ReadFile(filepath.Join(gate, "order"))
 	require.NoError(t, err)
