@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // Role capability masks from server/util/role/role.go (user-key bits only).
@@ -150,7 +151,10 @@ func observeTargetKey(conn *grpc.ClientConn, admin, member *identity, gid string
 		return fmt.Errorf("removed key Authenticate: %v", err)
 	}
 	for i, c := range member.cacheClients {
-		caps, ce := c.Capabilities.GetCapabilities(ctx, &repb.GetCapabilitiesRequest{})
+		// The server only advertises update_enabled=false to Bazel 6+ clients.
+		rmd, _ := proto.Marshal(&repb.RequestMetadata{ToolDetails: &repb.ToolDetails{ToolName: "bazel", ToolVersion: "7.0.0"}})
+		capCtx := metadata.AppendToOutgoingContext(ctx, "build.bazel.remote.execution.v2.requestmetadata-bin", string(rmd))
+		caps, ce := c.Capabilities.GetCapabilities(capCtx, &repb.GetCapabilitiesRequest{})
 		if m.status == 1 {
 			if ce != nil {
 				return ce
@@ -158,6 +162,11 @@ func observeTargetKey(conn *grpc.ClientConn, admin, member *identity, gid string
 			wantWrite := effectiveCaps(member.storedCaps, m.role)&1 != 0
 			if caps.GetCacheCapabilities().GetActionCacheUpdateCapabilities().GetUpdateEnabled() != wantWrite {
 				return fmt.Errorf("cache %d advertised AC write capability did not converge", i)
+			}
+		} else if ce == nil {
+			// Capabilities is not auth-gated: unauthenticated callers see update_enabled=true.
+			if !caps.GetCacheCapabilities().GetActionCacheUpdateCapabilities().GetUpdateEnabled() {
+				return fmt.Errorf("cache %d removed key still advertised restricted capabilities", i)
 			}
 		} else if status.Code(ce) != codes.Unauthenticated && status.Code(ce) != codes.PermissionDenied {
 			return fmt.Errorf("cache %d revoked capabilities: %v", i, ce)
