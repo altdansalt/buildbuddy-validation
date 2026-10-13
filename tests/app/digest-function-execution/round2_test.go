@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,11 +25,17 @@ func checkLinks(t *testing.T, ctx context.Context, c *harness.Clients, df repb.D
 	}
 	require.Len(t, r.OutputSymlinks, 3)
 	require.Equal(t, map[string]string{"file-link": "out", "dir-link": "tree", "dangling-link": "missing"}, links)
-	require.Empty(t, r.OutputFileSymlinks)
-	require.Empty(t, r.OutputDirectorySymlinks)
+	// REAPI permits these deprecated fields for v2.0 compatibility.
+	for _, link := range append(append([]*repb.OutputSymlink{}, r.OutputFileSymlinks...), r.OutputDirectorySymlinks...) {
+		require.Contains(t, links, link.Path)
+		require.Equal(t, links[link.Path], link.Target)
+	}
 	tree := new(repb.Tree)
 	require.NoError(t, proto.Unmarshal(read(t, ctx, c, df, r.OutputDirectories[0].TreeDigest), tree))
-	require.Equal(t, []*repb.SymlinkNode{{Name: "copy-link", Target: "copy"}, {Name: "dangling", Target: "absent"}}, tree.Children[0].Symlinks)
+	require.Len(t, tree.Children[0].Symlinks, 2)
+	for i, want := range []*repb.SymlinkNode{{Name: "copy-link", Target: "copy"}, {Name: "dangling", Target: "absent"}} {
+		require.True(t, proto.Equal(want, tree.Children[0].Symlinks[i]), "nested symlink %d: %v", i, tree.Children[0].Symlinks[i])
+	}
 }
 
 // Parallel subtests share one executor and cache namespace. Upload all actions
@@ -49,6 +56,30 @@ func TestConcurrentDigestFunctionsAndSymlinks(t *testing.T) {
 			app, proxy := f.Clients(harness.App), f.Clients(harness.CacheProxy)
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 			defer cancel()
+			if viaProxy {
+				// The harness starts Executor before CacheProxy. gRPC may retain the
+				// initial DNS failure until its reconnect timer fires. Retry only that
+				// exact startup failure before beginning the measured concurrent waves.
+				warmCtx, warmCancel := context.WithTimeout(ctx, time.Minute)
+				defer warmCancel()
+				d := action(t, warmCtx, proxy, repb.DigestFunction_SHA256, []byte("warmup"), *seed-1)
+				for {
+					r, err := execute(warmCtx, app, repb.DigestFunction_SHA256, d, true)
+					require.NoError(t, err)
+					if r.GetStatus().GetCode() == int32(codes.Unavailable) && strings.Contains(r.GetStatus().GetMessage(), "lookup cacheproxy") && strings.Contains(r.GetStatus().GetMessage(), "no such host") {
+						t.Log("waiting for executor cache connection after proxy startup")
+						select {
+						case <-warmCtx.Done():
+							t.Fatal(warmCtx.Err())
+						case <-time.After(time.Second):
+						}
+						continue
+					}
+					require.Zero(t, r.GetStatus().GetCode(), "%v", r.GetStatus())
+					checkResult(t, warmCtx, proxy, repb.DigestFunction_SHA256, r.Result, []byte("warmup"))
+					break
+				}
+			}
 			rng := rand.New(rand.NewSource(*seed))
 			for wave := 0; wave < *iterations; wave++ {
 				payload := make([]byte, rng.Intn(8193))

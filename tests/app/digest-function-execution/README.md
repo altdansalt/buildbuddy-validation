@@ -61,3 +61,11 @@ The release's separate cache route and percentage options are declared in
 No shared harness or dependency changes are needed. Replay with the same
 `-digest.seed` and `-digest.iterations` flags documented above; select just round 2
 with `--test_filter=TestConcurrentDigestFunctionsAndSymlinks`.
+
+The harness starts the executor before the proxy. The proxy-route case therefore
+performs a bounded SHA256 warm-up before its measured waves, retrying only
+UNAVAILABLE responses containing the initial `lookup cacheproxy ... no such host`
+DNS failure. This accommodates gRPC's reconnect timer after proxy startup; other
+errors fail immediately, and measured waves have no retries. REAPI permits
+populating deprecated symlink result fields for v2.0 compatibility; if present,
+these must agree with the modern output symlink paths and targets.
