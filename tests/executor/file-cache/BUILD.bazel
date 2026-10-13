@@ -4,7 +4,7 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["file_cache_test.go"],
+    srcs = ["file_cache_test.go", "docker_recycling_test.go"],
     tags = ["local", "requires-network"],
     deps = [
         "//harness:go_default_library",

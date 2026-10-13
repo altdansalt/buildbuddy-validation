@@ -56,3 +56,54 @@ Validation on the digest-pinned enterprise-v2.314.0 images:
 No failing property or product finding was observed in these runs; no
 bug-tagged target was added. Further seeds and clone/copy-mode coverage are
 useful future extensions rather than claims established by these runs.
+
+## Round 2
+
+The eviction/concurrent/restart workload now runs with explicit hardlink,
+`executor.local_cache_always_clone=true`, and always-clone plus
+`executor.enable_fastcopy_reflinking=true` configurations. On Linux in this
+release, `fastcopy.Clone` calls the hardlink implementation when reflinking is
+disabled. Enabling the clone flag alone therefore does **not** establish copy
+isolation. With reflinking enabled, the implementation uses `FICLONE` without a
+byte-copy fallback. The test probes `/data` with `cp --reflink=always` and reports
+an explicit skip if that filesystem cannot support it; it does not misclassify
+an unsupported filesystem as a product defect.
+
+`TestDockerRecycledAndFreshInputs` mounts a test-owned workspace and the fixture
+Docker socket into a released executor. The local app and executor use the same
+fixture daemon/network; actions have networking disabled. The action image is
+`mirror.gcr.io/library/alpine@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507`.
+It tests hardlink and clone-flag configurations, verifies a warmed shared digest
+in the file cache, observes successful asynchronous runner pooling, then
+alternates fresh Docker actions with recycled ones. Container hostnames must
+remain equal for recycled actions and differ for fresh actions. Each action
+checks duplicate shared inputs with different executable bits and removes and
+replaces one input path. Unique random inputs exceed cache capacity to drive
+eviction while the recycled runner remains pooled. All subsequent shared input
+hashes must still match the uploaded bytes. In-place writes to input inodes are
+outside this property; removing/replacing a path must preserve cache-owned links.
+
+The workload generator is seeded and replayable with the same flags as round 1;
+Docker scheduling is not deterministic. No local component testing is required.
+
+Round 2 validation (`--config=nobug --nocache_test_results`, pinned v2.314.0):
+
+| Seed | Iterations | Invocation | Result |
+| --- | --- | --- | --- |
+| 314159 | 12 | [Default suite](https://app.buildbuddy.io/invocation/5009321e-7c76-4835-ae35-3a9682459027) | Passed, 215.7 s |
+| 42 | 20 | [Additional seed](https://app.buildbuddy.io/invocation/ba0da2e6-162d-4429-8ce8-06ca2e4db21c) | Passed, 204.9 s |
+| 271828 | 24 | [Additional seed](https://app.buildbuddy.io/invocation/0f103e9a-263c-4506-9609-12ecb35d3497) | Passed, 222.4 s |
+
+The reflink subtest explicitly skipped on the hosted filesystem:
+`cp: failed to clone ...: Operation not supported`. Hardlink and clone-flag
+subtests, including Docker recycling, passed. Actual reflink execution remains
+unvalidated and requires a runner filesystem supporting FICLONE; there is no
+independently exposed byte-copy mode in the inspected release implementation.
+
+Initial runs completed the content/reuse checks but failed during cleanup of
+root-owned `metadata/host_id` in the test's mounted directory, for example
+[default](https://app.buildbuddy.io/invocation/0fe884a3-d1bd-4739-970a-466603c6a086)
+and [seed 42](https://app.buildbuddy.io/invocation/5096b334-295a-4a2e-8918-1550bea1be94).
+The adapter now registers root-owned directory cleanup before executor startup,
+so the executor stops before removal. These were test-fixture failures, not
+product findings. No bug target or finding file was warranted.
