@@ -39,7 +39,8 @@ Docker command or restart method would remove this workaround.
 - Startup cleanup: after SIGKILL, seed an aged nonempty fallback `.tmp` file and
   an aged zero-length file alongside a real committed CAS blob. Startup must
   remove both while preserving the committed blob and a recent temporary file.
-  An isolated Alpine helper mounts only the fixture app's volume. Aging mtime
+  An isolated helper using the fixture's pinned Redis image mounts only the
+  fixture app's volume. Aging mtime
   avoids waiting 15 minutes; this tests startup scanning, not a periodic sweep
   or host power loss. The existing test exercises a real interrupted stream.
 - ActionCache: twelve 64 KiB inline-stdout results overflow the 256 KiB budget.
@@ -58,3 +59,7 @@ Docker command or restart method would remove this workaround.
 
 Both legacy and v2 layouts use the harness's pinned released app image. No
 component calls address a shared deployment.
+
+For large runs, `bb remote --runner_exec_properties=init-dockerd=true test ...`
+allows all fixtures to reuse pulled images and avoids repeated Docker Hub pulls
+by separately owned daemons.

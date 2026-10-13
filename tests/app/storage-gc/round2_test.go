@@ -50,16 +50,16 @@ func TestStartupStaleFileCleanup(t *testing.T) {
 			docker(t, f, "kill", "--signal=KILL", name)
 			// Place artifacts alongside the actual committed blob in either layout.
 			script := `p=$(find /data/disk-cache -type f -name '*` + d.Hash + `*' | head -n 1); test -n "$p" || exit 1; printf partial > "$p.abcdefghij.tmp"; touch "$p.0123456789.tmp"; touch -t 200001010000 "$p.abcdefghij.tmp" "$p.0123456789.tmp"; printf recent > "$p.klmnopqrst.tmp"`
-			docker(t, f, "run", "--rm", "--network=none", "--volumes-from", name, "alpine:3.21", "sh", "-ec", script)
+			docker(t, f, "run", "--rm", "--network=none", "--volumes-from", name, "redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952", "sh", "-ec", script)
 			docker(t, f, "start", name)
 			waitRestart(t, f)
 			c = f.Clients(harness.App)
 			checkBlob(t, ctx, c, d, data, false)
 			require.Eventually(t, func() bool {
-				out := docker(t, f, "run", "--rm", "--network=none", "--volumes-from", name, "alpine:3.21", "sh", "-ec", `find /data/disk-cache -type f \( -name '*.abcdefghij.tmp' -o -name '*.0123456789.tmp' \)`)
+				out := docker(t, f, "run", "--rm", "--network=none", "--volumes-from", name, "redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952", "sh", "-ec", `find /data/disk-cache -type f \( -name '*.abcdefghij.tmp' -o -name '*.0123456789.tmp' \)`)
 				return len(bytes.TrimSpace(out)) == 0
 			}, 10*time.Second, 500*time.Millisecond, "startup scan must remove stale partial and zero-length files")
-			out := docker(t, f, "run", "--rm", "--network=none", "--volumes-from", name, "alpine:3.21", "sh", "-ec", `find /data/disk-cache -type f -name '*.klmnopqrst.tmp'`)
+			out := docker(t, f, "run", "--rm", "--network=none", "--volumes-from", name, "redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952", "sh", "-ec", `find /data/disk-cache -type f -name '*.klmnopqrst.tmp'`)
 			require.NotEmpty(t, bytes.TrimSpace(out), "recent temporary files must not be removed")
 		})
 	}
