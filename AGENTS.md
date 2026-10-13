@@ -79,6 +79,12 @@ Images default to digest-pinned `enterprise-v2.314.0`. Use
 app/cacheproxy options; `BB_VERSION` changes all three. Keep exact image/digest
 information in every finding, including when overriding defaults.
 
+## Images
+
+Never pull images from Docker Hub, including unqualified names or `docker.io`.
+Use `mirror.gcr.io` (for example, `mirror.gcr.io/library/alpine`) or `gcr.io`,
+and pin fixture images by digest.
+
 ## Bugs and findings
 
 - Passing coverage tests stay untagged with respect to `bug` (runner tags remain).
