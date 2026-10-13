@@ -39,6 +39,8 @@ type Options struct {
 	StartupTimeout time.Duration
 	// SkipAuthBootstrap permits tests to exercise an uninitialized app.
 	SkipAuthBootstrap bool
+	// ExpectStartupFailure waits for these components to exit unsuccessfully.
+	ExpectStartupFailure map[Component]bool
 }
 
 type Endpoint struct {
@@ -52,17 +54,21 @@ type Endpoint struct {
 }
 
 type Fixture struct {
-	t          testing.TB
-	ID         string
-	Network    string
-	OutputDir  string
-	Endpoints  map[Component]*Endpoint
-	APIKey     string
-	GroupID    string
-	Web        *WebSession
-	containers []string
-	dockerHost string
-	daemon     *dockerDaemon
+	t                 testing.TB
+	ID                string
+	Network           string
+	OutputDir         string
+	Endpoints         map[Component]*Endpoint
+	APIKey            string
+	GroupID           string
+	Web               *WebSession
+	containers        []string
+	dockerHost        string
+	daemon            *dockerDaemon
+	opts              Options
+	appTarget, jwtKey string
+	ports             map[Component][2]string
+	kinds             map[Component]Component
 }
 
 // Start registers cleanup before creating any resource, including on startup failure.
@@ -84,6 +90,9 @@ func Start(t testing.TB, opts Options) *Fixture {
 	if opts.StartupTimeout == 0 {
 		opts.StartupTimeout = 2 * time.Minute
 	}
+	f.opts = opts
+	f.ports = make(map[Component][2]string)
+	f.kinds = make(map[Component]Component)
 	want := make(map[Component]bool)
 	for _, c := range opts.Components {
 		if _, ok := PinnedImages[c]; !ok {
@@ -132,95 +141,108 @@ func Start(t testing.TB, opts Options) *Fixture {
 		t.Fatal(err)
 	}
 	jwtKey := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}))
+	f.appTarget, f.jwtKey = appTarget, jwtKey
 	for _, c := range []Component{App, Executor, CacheProxy} {
-		if !want[c] {
-			continue
+		if want[c] {
+			f.addComponent(c, c, opts)
 		}
-		cfg := defaults(c, appTarget, jwtKey)
-		cfg["server_type"] = string(c)
-		cfg["port"] = 8080
-		if c != Executor {
-			cfg["grpc_port"] = 1985
-		}
-		merge(cfg, opts.Config[c])
-		data, err := yaml.Marshal(cfg)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, forbidden := range []string{"app.buildbuddy.io", "remote.buildbuddy.io"} {
-			if strings.Contains(string(data)+strings.Join(opts.Args[c], " "), forbidden) {
-				t.Fatalf("cloud component target forbidden: %s", forbidden)
-			}
-		}
-		if c == App {
-			appCfg, _ := asMap(cfg["app"])
-			overrideApp, _ := asMap(opts.Config[App]["app"])
-			if _, explicit := overrideApp["build_buddy_url"]; !explicit {
-				port := fmt.Sprint(cfg["port"])
-				for _, arg := range opts.Args[App] {
-					if value, ok := strings.CutPrefix(arg, "--port="); ok {
-						port = value
-					}
-				}
-				appCfg["build_buddy_url"] = "http://app:" + port
-				data, err = yaml.Marshal(cfg)
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-		path := filepath.Join(f.OutputDir, string(c)+".yaml")
-		if err := os.WriteFile(path, data, 0600); err != nil {
-			t.Fatal(err)
-		}
-		name := f.ID + "-" + string(c)
-		image := Image(c, opts.Images)
-		f.containers = append(f.containers, name)
-		httpPort := fmt.Sprint(cfg["port"])
-		grpcPort := fmt.Sprint(cfg["grpc_port"])
-		serverType := fmt.Sprint(cfg["server_type"])
-		for _, arg := range opts.Args[c] {
-			if value, ok := strings.CutPrefix(arg, "--port="); ok {
-				httpPort = value
-			}
-			if value, ok := strings.CutPrefix(arg, "--grpc_port="); ok {
-				grpcPort = value
-			}
-			if value, ok := strings.CutPrefix(arg, "--server_type="); ok {
-				serverType = value
-			}
-		}
-		args := []string{"create", "--name", name, "--network", f.Network, "--network-alias", string(c), "--hostname", name, "--platform", "linux/amd64", "--volume", "/data", "-p", "127.0.0.1::" + httpPort}
-		if c != Executor {
-			args = append(args, "-p", "127.0.0.1::"+grpcPort)
-		}
-		args = append(args, opts.DockerArgs[c]...)
-		args = append(args, image, "--config_file=/config.yaml")
-		args = append(args, opts.Args[c]...)
-		f.docker(args...)
-		f.docker("cp", path, name+":/config.yaml")
-		f.docker("start", name)
-		ep := &Endpoint{ServerType: serverType, Container: name, Image: image, HTTP: "http://" + f.port(name, httpPort), InternalGRPC: "grpc://" + name + ":" + grpcPort}
-		if c == Executor {
-			ep.InternalGRPC = ""
-		}
-		if c != Executor {
-			ep.GRPC = f.port(name, grpcPort)
-		}
-		if c == App {
-			appCfg, _ := asMap(cfg["app"])
-			ep.SelfAuthURL = fmt.Sprint(appCfg["build_buddy_url"])
-		}
-		f.Endpoints[c] = ep
-		f.waitReady(c, ep, opts.StartupTimeout)
-		if c == App && !opts.SkipAuthBootstrap {
-			f.Web = LoginSelfAuth(t, ep)
-			f.GroupID = f.Web.GroupID
-			f.APIKey = f.Web.CreateAPIKey(t, f.GroupID, "fixture", []string{"CACHE_WRITE", "REGISTER_EXECUTOR"})
-		}
-		t.Logf("%s: image=%s HTTP=%s gRPC=%s", c, image, ep.HTTP, ep.GRPC)
+	}
+	if want[App] && want[Executor] && !opts.SkipAuthBootstrap && !opts.ExpectStartupFailure[App] && !opts.ExpectStartupFailure[Executor] {
+		f.WaitExecutionReady()
 	}
 	return f
+}
+
+func (f *Fixture) addComponent(id, c Component, opts Options) *Endpoint {
+	t := f.t
+	appTarget, jwtKey := f.appTarget, f.jwtKey
+	cfg := defaults(c, appTarget, jwtKey)
+	cfg["server_type"] = string(c)
+	cfg["port"] = 8080
+	if c != Executor {
+		cfg["grpc_port"] = 1985
+	}
+	merge(cfg, opts.Config[c])
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"app.buildbuddy.io", "remote.buildbuddy.io"} {
+		if strings.Contains(string(data)+strings.Join(opts.Args[c], " "), forbidden) {
+			t.Fatalf("cloud component target forbidden: %s", forbidden)
+		}
+	}
+	if c == App {
+		appCfg, _ := asMap(cfg["app"])
+		overrideApp, _ := asMap(opts.Config[App]["app"])
+		if _, explicit := overrideApp["build_buddy_url"]; !explicit {
+			port := fmt.Sprint(cfg["port"])
+			for _, arg := range opts.Args[App] {
+				if value, ok := strings.CutPrefix(arg, "--port="); ok {
+					port = value
+				}
+			}
+			appCfg["build_buddy_url"] = "http://app:" + port
+			data, err = yaml.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	path := filepath.Join(f.OutputDir, string(id)+".yaml")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	name := f.ID + "-" + string(id)
+	image := Image(c, opts.Images)
+	f.containers = append(f.containers, name)
+	httpPort := fmt.Sprint(cfg["port"])
+	grpcPort := fmt.Sprint(cfg["grpc_port"])
+	serverType := fmt.Sprint(cfg["server_type"])
+	for _, arg := range opts.Args[c] {
+		if value, ok := strings.CutPrefix(arg, "--port="); ok {
+			httpPort = value
+		}
+		if value, ok := strings.CutPrefix(arg, "--grpc_port="); ok {
+			grpcPort = value
+		}
+		if value, ok := strings.CutPrefix(arg, "--server_type="); ok {
+			serverType = value
+		}
+	}
+	args := []string{"create", "--name", name, "--network", f.Network, "--network-alias", string(c), "--hostname", name, "--platform", "linux/amd64", "--volume", "/data", "-p", "127.0.0.1::" + httpPort}
+	if c != Executor {
+		args = append(args, "-p", "127.0.0.1::"+grpcPort)
+	}
+	args = append(args, opts.DockerArgs[c]...)
+	args = append(args, image, "--config_file=/config.yaml")
+	args = append(args, opts.Args[c]...)
+	f.docker(args...)
+	f.docker("cp", path, name+":/config.yaml")
+	f.docker("start", name)
+	ep := &Endpoint{ServerType: serverType, Container: name, Image: image, InternalGRPC: "grpc://" + name + ":" + grpcPort}
+	if c == Executor {
+		ep.InternalGRPC = ""
+	}
+	if c == App {
+		appCfg, _ := asMap(cfg["app"])
+		ep.SelfAuthURL = fmt.Sprint(appCfg["build_buddy_url"])
+	}
+	f.Endpoints[id] = ep
+	f.ports[id] = [2]string{httpPort, grpcPort}
+	f.kinds[id] = c
+	if opts.ExpectStartupFailure[c] {
+		f.WaitExit(id, true)
+		return ep
+	}
+	f.refresh(id)
+	if c == App && !opts.SkipAuthBootstrap {
+		f.Web = LoginSelfAuth(t, ep)
+		f.GroupID = f.Web.GroupID
+		f.APIKey = f.Web.CreateAPIKey(t, f.GroupID, "fixture", []string{"CACHE_WRITE", "REGISTER_EXECUTOR"})
+	}
+	t.Logf("%s: image=%s HTTP=%s gRPC=%s", c, image, ep.HTTP, ep.GRPC)
+	return ep
 }
 
 func defaults(c Component, appTarget, jwtKey string) Config {

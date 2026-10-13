@@ -14,4 +14,4 @@ Behavior references at the pinned release:
 [REAPI Execute](https://github.com/bazelbuild/remote-apis/blob/main/build/bazel/remote/execution/v2/remote_execution.proto).
 Version skew coverage records observed compatibility of this release pair; REAPI does not promise arbitrary internal scheduler protocol compatibility.
 
-The Docker helper selects only a daemon containing the fixture's exact executor name, supporting both prestarted Docker and the harness's owned daemon. All mutations address that container. The test does not create additional containers or access a shared deployment.
+The tests use the harness lifecycle API, including expected startup failure and an additional executor. All mutations address fixture-owned containers.
