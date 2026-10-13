@@ -1,7 +1,7 @@
 # Executor command environment and arguments
 
 Tests start only fixture-local app, Redis, and released executor containers.
-Actions use the bare Linux runner, disable action caching, and have bounded
+Actions use bare and Docker Linux runners, disable action caching, and have bounded
 RPC/action deadlines. Container logs are preserved by the fixture and checked
 for Go panic/fatal-error signatures after cleanup.
 
@@ -33,3 +33,37 @@ GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/executor/env-args:path_bug_te
 An explicitly pushed branch can be selected with
 `--run_from_branch=area/executor-env-args` before `test` to bypass local workspace
 mirroring. No harness or dependency modifications are needed.
+
+Round 2 adds `round2_test`, which runs the same seeded fidelity and execve limit
+checks under bare and Docker isolation. Replay with
+`--test_arg=-envargs.seed=20261012`; each failure identifies its case index.
+Twenty-four cases combine sorted environment maps and argv containing empty
+strings, Unicode, equals signs, whitespace, shell metacharacters, and long values.
+The oracle compares NUL-delimited output byte-for-byte; generated names are safe
+POSIX identifiers so the shell probe does not alter their meaning.
+
+Limit coverage checks 131,000-byte successful strings, rejects 131,072-byte
+strings and 2.4 MB aggregate argv without a timeout, then verifies recovery.
+Docker actions use Alpine 3.21.3 and a private test-owned daemon, socket and
+workspace; released app/executor images retain the harness digest pins.
+PATH coverage includes qualified names with an unusable PATH, system tools,
+and Docker relative/missing/empty PATH entries. Bare action-PATH lookup cases
+extend the existing `bug` target and finding rather than duplicating the defect.
+
+On the hosted Docker runtime, runc rejects unqualified executables found via
+relative PATH entries (`cannot run executable found relative to current
+directory`, Go's ErrDot). The Docker PATH cases pin this clean runtime rejection;
+it is not filed as a BuildBuddy defect. Qualified executables and absolute
+system PATH entries succeed. For execve overflow, bare execution returns an
+execution status diagnostic; Docker returns exit 255 with the diagnostic in
+CAS-backed stderr. Both forms are accepted and checked for `argument list too long`.
+
+All area targets use exclusive scheduling and private Docker daemons with the
+public `mirror.gcr.io` registry mirror, avoiding Docker Hub anonymous pull limits
+without changing the pinned Redis digest or forwarding credentials.
+
+Final round 2 validation: [green suite](https://app.buildbuddy.io/invocation/abd45e97-e5cc-4f81-9674-f930fae4c875)
+([outer runner](https://app.buildbuddy.io/invocation/ed3dd455-7769-4afe-97da-1a24fe83c5ca)),
+run from pushed commit `cdb91f7` with
+`GIT_CONFIG_GLOBAL=/dev/null bb remote --run_from_branch=area/executor-env-args-2 test //tests/executor/env-args/... --config=nobug --test_output=all`.
+Both passing targets executed (no cached test results).
