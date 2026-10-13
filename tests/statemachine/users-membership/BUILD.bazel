@@ -35,3 +35,22 @@ go_test(
         "@org_golang_google_protobuf//proto:go_default_library",
     ],
 )
+
+go_test(
+    name = "download_bug",
+    size = "large",
+    timeout = "long",
+    args = ["-test.run=^TestRemovedMemberHTTPDownload$$"],
+    srcs = ["download_bug_test.go", "membership_test.go", "revocation_test.go", "effective_test.go", "cli_test.go", "permissions_test.go", "cache_writes_test.go", "oidc_test.go", "wire_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    deps = [
+        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+        "//harness:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_grpc//codes:go_default_library",
+        "@org_golang_google_grpc//status:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+        "@org_golang_google_grpc//metadata:go_default_library",
+        "@org_golang_google_protobuf//proto:go_default_library",
+    ],
+)
