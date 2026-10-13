@@ -255,7 +255,7 @@ func observeTargetKey(conn *grpc.ClientConn, admin, member *identity, gid string
 				return fmt.Errorf("HTTP download %d %q", res.StatusCode, data)
 			}
 		} else if res.StatusCode == 200 {
-			return fmt.Errorf("revoked HTTP download succeeded")
+			return fmt.Errorf("revoked HTTP download succeeded: %d %q headers=%v", res.StatusCode, data, res.Header)
 		}
 		resource := join(bytesField(1, join(text(1, member.seed.Hash), number(2, uint64(member.seed.SizeBytes)))), number(4, 2), number(5, 1))
 		meta, me := rpc(conn, member.targetKey, "GetCacheMetadata", join(bytesField(1, requestContext(member.uid, gid)), bytesField(2, resource)))
