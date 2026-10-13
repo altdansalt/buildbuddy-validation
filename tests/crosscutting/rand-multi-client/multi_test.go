@@ -27,8 +27,12 @@ var seed = flag.Int64("multi.seed", 314159, "deterministic workspace and schedul
 var rounds = flag.Int("multi.iterations", 3, "edit/build rounds (bounded by test deadline)")
 
 func bazelClient(t *testing.T, ctx context.Context) string {
+	return versionedBazelClient(t, ctx, "8.4.2")
+}
+
+func versionedBazelClient(t *testing.T, ctx context.Context, version string) string {
 	t.Helper()
-	const base = "https://releases.bazel.build/8.4.2/release/bazel-8.4.2-linux-x86_64"
+	base := "https://releases.bazel.build/" + version + "/release/bazel-" + version + "-linux-x86_64"
 	fetch := func(url string) []byte {
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		require.NoError(t, err)
