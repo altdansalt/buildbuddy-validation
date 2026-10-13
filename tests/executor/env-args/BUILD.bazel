@@ -25,3 +25,12 @@ go_test(
     tags = ["bug", "local", "requires-network"],
     deps = DEPS,
 )
+
+go_test(
+    name = "round2_test",
+    size = "large",
+    timeout = "long",
+    srcs = ["helpers_test.go", "docker_helpers_test.go", "round2_test.go"],
+    tags = ["local", "requires-network"],
+    deps = DEPS,
+)

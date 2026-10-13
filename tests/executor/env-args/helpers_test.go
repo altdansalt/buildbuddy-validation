@@ -55,7 +55,9 @@ func execute(t *testing.T, c *harness.Clients, root *repb.Digest, cmd *repb.Comm
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	cmd.Platform = &repb.Platform{Properties: []*repb.Platform_Property{{Name: "OSFamily", Value: "linux"}, {Name: "Arch", Value: "amd64"}, {Name: "workload-isolation-type", Value: "none"}}}
+	if cmd.Platform == nil {
+		cmd.Platform = &repb.Platform{Properties: []*repb.Platform_Property{{Name: "OSFamily", Value: "linux"}, {Name: "Arch", Value: "amd64"}, {Name: "workload-isolation-type", Value: "none"}}}
+	}
 	cd, err := c.UploadProto(ctx, instance, cmd)
 	require.NoError(t, err)
 	ad, err := c.UploadProto(ctx, instance, &repb.Action{CommandDigest: cd, InputRootDigest: root, Timeout: durationpb.New(20 * time.Second), DoNotCache: true})

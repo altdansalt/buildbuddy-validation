@@ -33,3 +33,19 @@ GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/executor/env-args:path_bug_te
 An explicitly pushed branch can be selected with
 `--run_from_branch=area/executor-env-args` before `test` to bypass local workspace
 mirroring. No harness or dependency modifications are needed.
+
+Round 2 adds `round2_test`, which runs the same seeded fidelity and execve limit
+checks under bare and Docker isolation. Replay with
+`--test_arg=-envargs.seed=20261012`; each failure identifies its case index.
+Twenty-four cases combine sorted environment maps and argv containing empty
+strings, Unicode, equals signs, whitespace, shell metacharacters, and long values.
+The oracle compares NUL-delimited output byte-for-byte; generated names are safe
+POSIX identifiers so the shell probe does not alter their meaning.
+
+Limit coverage checks 131,000-byte successful strings, rejects 131,072-byte
+strings and 2.4 MB aggregate argv without a timeout, then verifies recovery.
+Docker actions use Alpine 3.21.3 and a private test-owned daemon, socket and
+workspace; released app/executor images retain the harness digest pins.
+PATH coverage includes qualified names with an unusable PATH, system tools,
+and Docker relative/missing/empty PATH entries. Bare action-PATH lookup cases
+extend the existing `bug` target and finding rather than duplicating the defect.
