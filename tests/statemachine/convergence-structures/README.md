@@ -47,6 +47,25 @@ CLI availability is mandatory. Read-only CLI subprocess concurrency is bounded a
 fixture key; the dispatch credential is never forwarded. Runner-installed `bb`
 is not version-pinned, a remaining reproducibility limitation.
 
+## Round-2 addition: digest-function and instance-name namespaces
+
+`//tests/statemachine/convergence-structures:variants_test`
+(`variants_test.go`) repeats the write/update/re-write sequences in eight
+namespaces: SHA256, SHA1, SHA384 and SHA512, each with an empty and a
+non-empty (`team/a`) instance name. Writes alternate between app and proxy
+(two API keys, one org) and between BatchUpdateBlobs, identity ByteStream.Write
+and zstd ByteStream.Write; each write is repeated through the other endpoint
+and RPC. Leaf and root Directory revisions (a DAG with a repeated child, then
+a removed path) are published per namespace. After every one of the 96 steps,
+all namespaces are compared with the model on both endpoints: exact
+FindMissingBlobs, BatchReadBlobs cardinality/status/bytes, identity, zstd and
+ranged ByteStream reads, and paged (page size 2) GetTree multiplicity. Each
+step logs its convergence time (observed 90-225 ms upper bound) and then
+requires two stable samples. No divergence was found. A deliberate model
+perturbation (not retained) made the target fail, confirming sensitivity.
+BLAKE3 is skipped because no hash library is available to tests without
+`go.mod` changes (shared-dependency request for the coordinator).
+
 ## Source inventory
 
 Inspected locally at v2.314.0:
