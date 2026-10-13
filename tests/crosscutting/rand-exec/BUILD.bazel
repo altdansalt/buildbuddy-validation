@@ -1,16 +1,31 @@
 load("@rules_go//go:def.bzl", "go_test")
 
+COMMON_SRCS = ["random_execution_test.go", "round2_test.go", "docker_fixture_test.go", "minimal_helpers_test.go"]
+COMMON_DEPS = [
+    "//harness:go_default_library",
+    "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+    "@com_github_stretchr_testify//require:go_default_library",
+    "@org_golang_google_protobuf//proto:go_default_library",
+    "@org_golang_google_protobuf//types/known/durationpb:go_default_library",
+    "@org_golang_google_grpc//codes:go_default_library",
+    "@org_golang_google_grpc//status:go_default_library",
+]
+
 go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["random_execution_test.go"],
+    srcs = COMMON_SRCS,
     tags = ["local", "requires-network"],
-    deps = [
-        "//harness:go_default_library",
-        "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
-        "@com_github_stretchr_testify//require:go_default_library",
-        "@org_golang_google_protobuf//proto:go_default_library",
-        "@org_golang_google_protobuf//types/known/durationpb:go_default_library",
-    ],
+    deps = COMMON_DEPS,
+)
+
+go_test(
+    name = "overlapping_directory_bug",
+    size = "large",
+    timeout = "long",
+    srcs = COMMON_SRCS + ["overlapping_bug_test.go"],
+    args = ["-test.run=^TestOverlappingDirectoryMinimal$$"],
+    tags = ["bug", "local", "requires-network"],
+    deps = COMMON_DEPS,
 )
