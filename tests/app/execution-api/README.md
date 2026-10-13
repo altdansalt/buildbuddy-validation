@@ -24,3 +24,26 @@ References:
 Run passing coverage with `bb remote test //tests/app/execution-api/... --config=nobug`.
 Run the reproducer explicitly with `--test_tag_filters=bug --nocache_test_results`.
 Follow root AGENTS.md for the public runner-fetch remote.
+
+Round 2 adds replayable policy/cache and queue coverage (seed `20261013`):
+
+- Every results-cache priority / skip-lookup combination, with and without
+  Action.do_not_cache, in seeded order; cacheable duplicate in-flight calls
+  share an operation, while do_not_cache calls execute independently.
+- A single occupied executor slot gates three distinct priorities. Executor
+  reservation logs establish that all three are queued before release, and
+  the actions record their execution order in a fixture-local bind mount.
+- A 4 MiB Pebble cache receives seeded pressure with eviction enabled. Large
+  action-cache entries at both priority boundaries must disappear, then Execute
+  must run again and repopulate the cache. Eviction observation order is logged;
+  no total priority eviction order is asserted because REAPI makes retention
+  priority semantics server-dependent. Restoring inputs rules out missing CAS.
+- Completed WaitExecution replay, a valid unknown name, and an expired stream
+  with Redis availability monitoring enabled. Expiry is accelerated by shortening
+  only the fixture's operation stream TTL after verifying completed replay.
+  Docker commands locate the daemon owning that fixture and address only its
+  containers, including when the harness owns an isolated dockerd.
+
+`unknown_operation_bug_test` is a separate minimal default-configuration repro:
+valid unknown names hang until the client's five-second deadline. It reproduced
+on two fresh fixtures; the round 2 finding remains `unverified` as requested.

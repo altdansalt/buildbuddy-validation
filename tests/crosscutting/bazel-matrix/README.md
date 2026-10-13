@@ -32,5 +32,21 @@ Correctness references:
 - [Pinned release runner](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/enterprise/server/remote_execution/runner/runner.go): the bare runner executes commands inside the fixture executor container.
 
 The suite does not cover language toolchains, nested Docker/Firecracker isolation,
-or all patch releases. Repository `.gitignore` matches this directory's name;
-use `git add -f` for new files here.
+or all patch releases.
+
+Round 2 adds `TestSharedProxyCache`: a seed-20261012 binary payload is built
+with Bazel 7, then rebuilt with 8 and 9 against the same proxy instance. Each
+rebuild must preserve tree contents, empty files, symlinks and executable
+permissions. The execution JSON logs record REAPI action digests; matching
+digests must report remote cache hits. New digests may legitimately miss. A fresh
+Bazel 7 client must still hit its original result after the upgrades. Concurrent cold-upload and warm-read waves of all three versions
+use independent workspaces and fresh output roots against the proxy.
+Logs are named by phase and version in the fixture outputs.
+
+Bazel version changes do not guarantee identical remote action identities.
+[Bazel 7.6.1 command serialization](https://github.com/bazelbuild/bazel/blob/7.6.1/src/main/java/com/google/devtools/build/lib/remote/RemoteExecutionService.java#L246)
+sets both legacy output fields and `output_paths`, whereas
+[Bazel 8.4.2](https://github.com/bazelbuild/bazel/blob/8.4.2/src/main/java/com/google/devtools/build/lib/remote/RemoteExecutionService.java#L258)
+selects one representation based on server capabilities. A version-dependent
+miss alone is not a cache correctness defect. The concurrent warm wave requires
+a hit for every version's action identity populated by the sequential builds.

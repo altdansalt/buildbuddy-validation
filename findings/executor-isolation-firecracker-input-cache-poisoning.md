@@ -132,3 +132,57 @@ with successful action exit codes and a passing intervening CAS read:
 
 - [Independent run 1](https://app.buildbuddy.io/invocation/02349a86-6e03-4671-9183-1277e83a6acf) ([outer runner](https://app.buildbuddy.io/invocation/0f63fd51-d4b8-450d-8493-47d5ecc43a01)): expected `next action: original\n`, actual `next action: poisoned\n`.
 - [Independent run 2](https://app.buildbuddy.io/invocation/e934d5e6-4b03-4aa9-8b72-39d19993def0) ([outer runner](https://app.buildbuddy.io/invocation/b3885fc4-8bd2-4736-9c70-aac6d618f3f6)): identical mismatch in a fresh fixture.
+
+## Version history
+
+Tested on 2026-10-13 using the unchanged bug-tagged reproducer from
+`origin/area/executor-isolation-firecracker` at `ffacde7098f82a382fcfd2142828c626cd16e387`.
+App, Redis and executor were started inside each test on hosted `bb remote`
+runners, with fixture-local endpoints and disposable local credentials.
+No BuildBuddy component was built from source.
+
+| Enterprise release (release date, UTC) | Result | BuildBuddy invocation |
+| --- | --- | --- |
+| v2.314.0 (2026-10-08) | Reproduces | [run](https://app.buildbuddy.io/invocation/652be986-b22c-486b-85cc-0610fafd827a) |
+| v2.313.0 (2026-10-06) | Reproduces | [run](https://app.buildbuddy.io/invocation/faeab226-4045-4d23-ad5f-48b77c17ffd1) |
+| v2.290.0 (2026-07-29) | Reproduces | [run](https://app.buildbuddy.io/invocation/8b6f2d1c-1cad-429b-9f78-6670b321e224) |
+| v2.275.0 (2026-06-04) | Reproduces | [run](https://app.buildbuddy.io/invocation/99de7bfa-c4c1-42ec-a9c8-13c7cd18b56e) |
+| v2.258.0 (2026-04-09) | Reproduces | [run](https://app.buildbuddy.io/invocation/2c719411-3940-4949-8faa-f4d029890f90); [independent repeat](https://app.buildbuddy.io/invocation/a8e15e5f-e12e-46a2-b4b5-b6b04835a47e) |
+
+All five releases failed at the finding's intended assertion: The later action
+read "poisoned" instead of "original"; both action exits and the intervening app
+CAS read passed.
+The oldest release was reproduced in two independent fresh fixtures.
+
+**Earliest tested reproducing release: v2.258.0 (2026-04-09).** The defect
+was present at or before that release; its actual introduction is unknown.
+No earlier release or known-good boundary was tested, so this is an upper
+bound on introduction, not evidence that v2.258.0 introduced it.
+
+No release-specific configuration changes were needed for these five releases.
+Despite the area name, this target selects bare (`none`) isolation and needs no KVM.
+
+Command template, substituting the matching digests from the table below:
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/executor/isolation-firecracker:input_mutation_bug_test \
+  --test_tag_filters=bug --nocache_test_results --test_output=all \
+  --test_arg=-harness.app_image=gcr.io/flame-public/buildbuddy-app-enterprise@<app-digest> \
+  --test_arg=-harness.executor_image=gcr.io/flame-public/buildbuddy-executor-enterprise@<executor-digest>
+```
+
+### Exact release pins
+
+Both components were overridden together. These linux/amd64 manifest digests
+were resolved from the GCR registry API, and the fixture logs identify the
+requested digest references. App repository:
+`gcr.io/flame-public/buildbuddy-app-enterprise`; executor repository:
+`gcr.io/flame-public/buildbuddy-executor-enterprise`.
+
+| Enterprise release | App digest | Executor digest |
+| --- | --- | --- |
+| v2.314.0 | `sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` | `sha256:7d178c9ae49b0749dc0b509c471c1477ed548c8330441d37fed3b5a68ab364b8` |
+| v2.313.0 | `sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` | `sha256:8f7c2662f5fcd0ab888113f6d36d31cde8b8ea254434a8177cf6996b01155afe` |
+| v2.290.0 | `sha256:f3b285107f28da495e9496dd848857ce0cf6cddbf3fac8743b259c2a7a8678b6` | `sha256:2c65048231e21ecf0c60623bc5f8ccaf494e82828077c5064aa994909e15607a` |
+| v2.275.0 | `sha256:75ffd43cf6dc14ccf5a652b760d7e4d7390dfa7870524c57e7f354f271e96db1` | `sha256:d2dbe25032467449c80e9eb18002d56b57bcf5247cba267ab886022415b30956` |
+| v2.258.0 | `sha256:f7b499d817581e58c1fe826c6441a7773519488d4500dc6ffafad387d2c990c4` | `sha256:500703561ba144c64b12a36f0d3350422f09efe693b8e24592414958ea6753cd` |

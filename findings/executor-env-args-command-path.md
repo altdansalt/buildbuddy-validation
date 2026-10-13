@@ -124,3 +124,56 @@ Severity remains **medium**: ordinary tool discovery fails for this provider,
 with a straightforward qualified-path workaround. Selecting a different tool
 is a source-derived risk, not demonstrated by this reproducer. No security
 impact or applicability to other isolation providers is established.
+
+## Version history
+
+Tested on 2026-10-13 using the unchanged bug-tagged reproducer from
+`origin/area/executor-env-args` at `87dd488cbfab3f9e6e0078653003f3afeca77316`.
+App, Redis and executor were started inside each test on hosted `bb remote`
+runners, with fixture-local endpoints and disposable local credentials.
+No BuildBuddy component was built from source.
+
+| Enterprise release (release date, UTC) | Result | BuildBuddy invocation |
+| --- | --- | --- |
+| v2.314.0 (2026-10-08) | Reproduces | [run](https://app.buildbuddy.io/invocation/9880cb80-30d6-46fd-a158-0f3c80f66827) |
+| v2.313.0 (2026-10-06) | Reproduces | [run](https://app.buildbuddy.io/invocation/a1bd24a5-78c0-4076-8fc7-4af329245722) |
+| v2.290.0 (2026-07-29) | Reproduces | [run](https://app.buildbuddy.io/invocation/f41e17d5-79f2-4a52-bfe4-0271bcf2dbb0) |
+| v2.275.0 (2026-06-04) | Reproduces | [run](https://app.buildbuddy.io/invocation/8ea4a3a0-db7f-4b4b-80d0-936d2161586e) |
+| v2.258.0 (2026-04-09) | Reproduces | [run](https://app.buildbuddy.io/invocation/dcc942fe-7a26-4a37-9cec-40fd42ce974f); [independent repeat](https://app.buildbuddy.io/invocation/a2e0ce59-f648-41bf-a3d6-613c0d7aed37) |
+
+All five releases failed at the finding's intended assertion: NOT_FOUND (5),
+exit -2 for the unqualified executable with action PATH=.; the qualified-path
+control returned OK and exit 0.
+The oldest release was reproduced in two independent fresh fixtures.
+
+**Earliest tested reproducing release: v2.258.0 (2026-04-09).** The defect
+was present at or before that release; its actual introduction is unknown.
+No earlier release or known-good boundary was tested, so this is an upper
+bound on introduction, not evidence that v2.258.0 introduced it.
+
+No release-specific configuration changes were needed for these five releases.
+
+Command template, substituting the matching digests from the table below:
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/executor/env-args:path_bug_test \
+  --test_tag_filters=bug --nocache_test_results --test_output=all \
+  --test_arg=-harness.app_image=gcr.io/flame-public/buildbuddy-app-enterprise@<app-digest> \
+  --test_arg=-harness.executor_image=gcr.io/flame-public/buildbuddy-executor-enterprise@<executor-digest>
+```
+
+### Exact release pins
+
+Both components were overridden together. These linux/amd64 manifest digests
+were resolved from the GCR registry API, and the fixture logs identify the
+requested digest references. App repository:
+`gcr.io/flame-public/buildbuddy-app-enterprise`; executor repository:
+`gcr.io/flame-public/buildbuddy-executor-enterprise`.
+
+| Enterprise release | App digest | Executor digest |
+| --- | --- | --- |
+| v2.314.0 | `sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` | `sha256:7d178c9ae49b0749dc0b509c471c1477ed548c8330441d37fed3b5a68ab364b8` |
+| v2.313.0 | `sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` | `sha256:8f7c2662f5fcd0ab888113f6d36d31cde8b8ea254434a8177cf6996b01155afe` |
+| v2.290.0 | `sha256:f3b285107f28da495e9496dd848857ce0cf6cddbf3fac8743b259c2a7a8678b6` | `sha256:2c65048231e21ecf0c60623bc5f8ccaf494e82828077c5064aa994909e15607a` |
+| v2.275.0 | `sha256:75ffd43cf6dc14ccf5a652b760d7e4d7390dfa7870524c57e7f354f271e96db1` | `sha256:d2dbe25032467449c80e9eb18002d56b57bcf5247cba267ab886022415b30956` |
+| v2.258.0 | `sha256:f7b499d817581e58c1fe826c6441a7773519488d4500dc6ffafad387d2c990c4` | `sha256:500703561ba144c64b12a36f0d3350422f09efe693b8e24592414958ea6753cd` |

@@ -105,3 +105,60 @@ Source inspection used release tag `v2.314.0` (commit
 and [troubleshooting docs](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/docs/troubleshooting-rbe.md).
 They provide no output-contract exception relevant to this defect; the legacy
 precreation workaround is documented in source, as distinguished in the verification reasoning.
+
+## Version history
+
+Tested on 2026-10-13 using the unchanged bug-tagged reproducer from
+`origin/area/executor-outputs-2` at `f953aa418f749a1b102df6c1b61f85a458fabeb4`.
+App, Redis and executor were started inside each test on hosted `bb remote`
+runners, with fixture-local endpoints and disposable local credentials.
+No BuildBuddy component was built from source.
+
+| Enterprise release (release date, UTC) | Result | BuildBuddy invocation |
+| --- | --- | --- |
+| v2.314.0 (2026-10-08) | Reproduces | [run](https://app.buildbuddy.io/invocation/2e96ab0a-8cb9-4f4d-919b-fd6e34541405) |
+| v2.313.0 (2026-10-06) | Reproduces | [run](https://app.buildbuddy.io/invocation/71022919-3179-42ac-8801-1bdb50ee0ebb) |
+| v2.290.0 (2026-07-29) | Reproduces | [run](https://app.buildbuddy.io/invocation/aac11647-ec5c-43ca-8494-49ee4d857081) |
+| v2.275.0 (2026-06-04) | Reproduces | [run](https://app.buildbuddy.io/invocation/2b8a9774-b8ad-4198-862b-700bd17c5072) |
+| v2.258.0 (2026-04-09) | Reproduces | [run](https://app.buildbuddy.io/invocation/23c416f3-5e4f-493c-be8c-941325281908); [independent repeat](https://app.buildbuddy.io/invocation/4702a650-1fe0-4095-86a1-68796c425ba7) |
+
+All five releases failed at the finding's intended assertion: The action
+returned OK but OutputSymlinks was empty for the requested link.
+The oldest release was reproduced in two independent fresh fixtures.
+
+**Earliest tested reproducing release: v2.258.0 (2026-04-09).** The defect
+was present at or before that release; its actual introduction is unknown.
+No earlier release or known-good boundary was tested, so this is an upper
+bound on introduction, not evidence that v2.258.0 introduced it.
+
+No release-specific configuration changes were needed for these five releases.
+
+Command template, substituting the matching digests from the table below:
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/executor/outputs:output_paths_precedence \
+  --test_tag_filters=bug --nocache_test_results --test_output=all \
+  --test_arg=-harness.app_image=gcr.io/flame-public/buildbuddy-app-enterprise@<app-digest> \
+  --test_arg=-harness.executor_image=gcr.io/flame-public/buildbuddy-executor-enterprise@<executor-digest>
+```
+
+The invocation batches the five output bug targets; `output_paths_precedence`
+contains separate symlink-loss and directory-precreation tests. The result
+above was checked against this finding's individual Go test, not just the
+aggregate Bazel failure.
+
+### Exact release pins
+
+Both components were overridden together. These linux/amd64 manifest digests
+were resolved from the GCR registry API, and the fixture logs identify the
+requested digest references. App repository:
+`gcr.io/flame-public/buildbuddy-app-enterprise`; executor repository:
+`gcr.io/flame-public/buildbuddy-executor-enterprise`.
+
+| Enterprise release | App digest | Executor digest |
+| --- | --- | --- |
+| v2.314.0 | `sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` | `sha256:7d178c9ae49b0749dc0b509c471c1477ed548c8330441d37fed3b5a68ab364b8` |
+| v2.313.0 | `sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` | `sha256:8f7c2662f5fcd0ab888113f6d36d31cde8b8ea254434a8177cf6996b01155afe` |
+| v2.290.0 | `sha256:f3b285107f28da495e9496dd848857ce0cf6cddbf3fac8743b259c2a7a8678b6` | `sha256:2c65048231e21ecf0c60623bc5f8ccaf494e82828077c5064aa994909e15607a` |
+| v2.275.0 | `sha256:75ffd43cf6dc14ccf5a652b760d7e4d7390dfa7870524c57e7f354f271e96db1` | `sha256:d2dbe25032467449c80e9eb18002d56b57bcf5247cba267ab886022415b30956` |
+| v2.258.0 | `sha256:f7b499d817581e58c1fe826c6441a7773519488d4500dc6ffafad387d2c990c4` | `sha256:500703561ba144c64b12a36f0d3350422f09efe693b8e24592414958ea6753cd` |

@@ -17,6 +17,12 @@ import (
 	"github.com/altdansalt/buildbuddy-validation/harness"
 )
 
+var bazelVersions = []struct{ version, hash string }{
+	{"7.6.1", "ac6249d1192aea9feaf49dfee2ab50c38cee2454b00cf29bbec985a11795c025"},
+	{"8.4.2", "4dc8e99dfa802e252dac176d08201fd15c542ae78c448c8a89974b6f387c282c"},
+	{"9.0.0", "c44a93f25398c68f904fa1d19b61d321de6c0d2f09dca375d7bc0dc9b9428403"},
+}
+
 const rule = `def _impl(ctx):
     out = ctx.actions.declare_directory(ctx.label.name)
     ctx.actions.run_shell(
@@ -113,11 +119,8 @@ func TestBazelMatrix(t *testing.T) {
 			}
 		}
 	})
-	versions := []struct{ version, hash string }{
-		{"7.6.1", "ac6249d1192aea9feaf49dfee2ab50c38cee2454b00cf29bbec985a11795c025"},
-		{"8.4.2", "4dc8e99dfa802e252dac176d08201fd15c542ae78c448c8a89974b6f387c282c"},
-		{"9.0.0", "c44a93f25398c68f904fa1d19b61d321de6c0d2f09dca375d7bc0dc9b9428403"},
-	}
+	versions := bazelVersions
+
 	for _, v := range versions {
 		binary := download(t, writableTemp(t), v.version, v.hash)
 		for _, mode := range []string{"cache", "execution"} {

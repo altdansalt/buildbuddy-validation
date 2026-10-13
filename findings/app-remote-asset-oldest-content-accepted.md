@@ -105,3 +105,46 @@ Severity remains **low**: the freshness contract is violated, but the validated
 checksum selects the same bytes and the test demonstrates no corruption or
 security boundary violation. This finding covers checksum cache hits, not all
 freshness handling.
+
+## Version history
+
+Tested on 2026-10-13 against five released linux/amd64 app images, spanning
+2026-04-16 through 2026-10-08. The unchanged bug-tagged target
+`//tests/app/remote-asset:freshness_bug` from PR branch
+`area/app-remote-asset` at `5d92e9a5576224c08c8319e3c1ee65f23615ee38` ran once per release
+with fresh fixture-local containers and test-result caching disabled.
+
+| Enterprise release | Release date | GCR manifest digest | Result | BuildBuddy invocation |
+| --- | --- | --- | --- | --- |
+| 2.314.0 | 2026-10-08 | `sha256:ed321abe352bc7fa58101e979ff13fd153ccef98a3609e44aef4075848629843` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/52c4a356-dc40-4d34-ba0a-b73ea09990e4) ([runner](https://app.buildbuddy.io/invocation/c5a43cce-e183-4b85-83d4-520ee55c1d2e)) |
+| 2.313.0 | 2026-10-06 | `sha256:210f965d3cb47dd7c1073eff3745d6acdd31ce1e2904bb08cbd25756823086d6` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/03483bef-2c99-41d3-8a56-4b0104d35b44) ([runner](https://app.buildbuddy.io/invocation/479006cc-041e-42f5-acc6-c8a6f87665f6)) |
+| 2.300.0 | 2026-09-01 | `sha256:03bd9ccb5888936beb301a577bf01560511cded6fa909079cbb53277aa32ed68` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/bba2fdb3-4368-4afa-b89d-b2dc32e26542) ([runner](https://app.buildbuddy.io/invocation/4541522a-ba20-4f7f-8ed5-6699719eec9a)) |
+| 2.280.0 | 2026-06-23 | `sha256:d9fbae912f786a0f95d351ffb7c580a6ecb8b1fb636fd3fe8899bf1cb8350a35` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/16c655fb-4adb-4d69-b683-8fadf4764364) ([runner](https://app.buildbuddy.io/invocation/782a5982-b0b7-41aa-b5b5-0285c18c5017)) |
+| 2.260.0 | 2026-04-16 | `sha256:0f6376865cc9c92d0e837aa1cb53717b59875db68a1b09b6dd479c571f6ab88e` | Reproduces | [Bazel results](https://app.buildbuddy.io/invocation/f8485bde-097b-45b2-866a-af9c9ae41638) ([runner](https://app.buildbuddy.io/invocation/5bdf0bf7-c9c8-4998-8ec0-ddf85e49f5d2)) |
+
+All image references use
+`gcr.io/flame-public/buildbuddy-app-enterprise@<digest>`; digests were resolved
+from the GCR manifest API for the corresponding `enterprise-v<version>` tags.
+The 2.314.0 digest matches the repository default.
+
+Observed on every tested version: Both fetches succeed, but the origin request count stays at 1 instead of 2 after the newer oldest_content_accepted bound.
+
+**Earliest tested release reproducing: 2.260.0 (2026-04-16).**
+The defect was present by that release; the introduction version is unknown.
+All sampled releases reproduce, so this matrix does not establish an
+introduction interval or imply every intervening release was tested.
+
+No older release required startup configuration changes. All five reached
+the intended product assertion after fixture startup and authentication.
+The existing test-owned-origin IP allowlist override was retained, and the
+Fetch-to-CAS preflight succeeded before the reproducing requests; transient
+self-RPC startup reconnect messages are not counted as defect evidence.
+
+Command pattern (run from the repro branch; substitute the digest above):
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null bb remote --runner_exec_properties=init-dockerd=true test \
+  //tests/app/remote-asset:freshness_bug \
+  --test_tag_filters=bug --nocache_test_results --test_output=all \
+  --test_arg=-harness.app_image=gcr.io/flame-public/buildbuddy-app-enterprise@<digest>
+```

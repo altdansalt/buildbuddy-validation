@@ -11,7 +11,8 @@ executable bits on cold and warm file-cache paths; 4,096 sibling files and a
 128-level tree. Every valid Directory is sorted by UTF-8 name.
 
 The collision target supplies one file and one directory with the same name and
-expects INVALID_ARGUMENT before command execution.
+records the released materializer's UNKNOWN filesystem error. REAPI permits
+servers to skip canonicalization checks; it does not require INVALID_ARGUMENT.
 
 References inspected:
 
@@ -20,8 +21,7 @@ References inspected:
 - [Released advertised capabilities](https://github.com/buildbuddy-io/buildbuddy/blob/v2.314.0/server/remote_cache/capabilities_server/capabilities_server.go): absolute symlinks allowed.
 
 Run regression coverage with `bb remote test //tests/executor/input-tree/... --config=nobug`.
-Run the malformed-tree probe explicitly with
-`bb remote test //tests/executor/input-tree:file_directory_collision_test --test_tag_filters=bug --nocache_test_results`.
+The malformed-tree probe is included in passing regression coverage.
 
 Limits: this is bounded stress coverage, not an exhaustive maximum-size test.
 It checks `is_executable`; optional Unix mode node properties are not assumed

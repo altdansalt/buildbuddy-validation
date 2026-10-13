@@ -34,6 +34,7 @@ type snapshot struct {
 	Stdout, Stderr string
 	Files          map[string]file
 	Dirs           map[string]bool
+	Links          map[string]string
 }
 type testCase struct {
 	Command *repb.Command
@@ -107,7 +108,9 @@ func generate(r *rand.Rand, index int) testCase {
 	return testCase{Command: cmd, Input: token(r) + "\n"}
 }
 
-func emptySnapshot() snapshot { return snapshot{Files: map[string]file{}, Dirs: map[string]bool{}} }
+func emptySnapshot() snapshot {
+	return snapshot{Files: map[string]file{}, Dirs: map[string]bool{}, Links: map[string]string{}}
+}
 func reference(t *testing.T, ctx context.Context, tc testCase) snapshot {
 	t.Helper()
 	dir := t.TempDir()
@@ -134,7 +137,7 @@ func reference(t *testing.T, ctx context.Context, tc testCase) snapshot {
 	s.Stdout = stdout.String()
 	s.Stderr = stderr.String()
 	for _, p := range paths {
-		_, err := os.Stat(filepath.Join(dir, p))
+		_, err := os.Lstat(filepath.Join(dir, p))
 		if os.IsNotExist(err) {
 			continue
 		}
@@ -146,6 +149,14 @@ func reference(t *testing.T, ctx context.Context, tc testCase) snapshot {
 			rel, err := filepath.Rel(dir, path)
 			if err != nil {
 				return err
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				target, err := os.Readlink(path)
+				if err != nil {
+					return err
+				}
+				s.Links[rel] = target
+				return nil
 			}
 			if info.IsDir() {
 				s.Dirs[rel] = true
@@ -202,15 +213,20 @@ func normalized(t *testing.T, ctx context.Context, c *harness.Clients, instance 
 	}
 	addFile := func(path string, d *repb.Digest, x bool) {
 		_, exists := s.Files[path]
-		require.False(t, exists, "duplicate output %q", path)
+		if exists {
+			require.Equal(t, s.Files[path], file{string(read(d)), x}, "inconsistent overlapping output %q", path)
+			return
+		}
 		s.Files[path] = file{string(read(d)), x}
 	}
 	for _, f := range result.OutputFiles {
 		addFile(f.Path, f.Digest, f.IsExecutable)
 	}
-	require.Empty(t, result.OutputFileSymlinks)
-	require.Empty(t, result.OutputDirectorySymlinks)
-	require.Empty(t, result.OutputSymlinks)
+	for _, links := range [][]*repb.OutputSymlink{result.OutputFileSymlinks, result.OutputDirectorySymlinks, result.OutputSymlinks} {
+		for _, link := range links {
+			s.Links[link.Path] = link.Target
+		}
+	}
 	for _, out := range result.OutputDirectories {
 		tree := &repb.Tree{}
 		require.NoError(t, proto.Unmarshal(read(out.TreeDigest), tree))
@@ -226,7 +242,9 @@ func normalized(t *testing.T, ctx context.Context, c *harness.Clients, instance 
 			require.Less(t, depth, 32, "cyclic or excessively deep Tree")
 			require.NotNil(t, dir, "missing Tree child at %s", path)
 			s.Dirs[path] = true
-			require.Empty(t, dir.Symlinks)
+			for _, link := range dir.Symlinks {
+				s.Links[path+"/"+link.Name] = link.Target
+			}
 			for _, f := range dir.Files {
 				addFile(path+"/"+f.Name, f.Digest, f.IsExecutable)
 			}
@@ -242,7 +260,7 @@ func normalized(t *testing.T, ctx context.Context, c *harness.Clients, instance 
 func TestRandomExecutionProperties(t *testing.T) {
 	require.Greater(t, *iterations, 0)
 	t.Logf("replay: -rand-exec.seed=%d -rand-exec.iterations=%d", *seed, *iterations)
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App, harness.Executor}})
+	f := bareFixture(t)
 	c := f.Clients(harness.App)
 	suiteCtx, suiteCancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer suiteCancel()

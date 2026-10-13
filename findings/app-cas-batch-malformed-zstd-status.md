@@ -48,6 +48,14 @@ malformed client data: code:13 message:"Failed to decompress zstd-compressed blo
 
 ## Notes
 
+Duplicate of: [app-compression-corrupt-batch-status.md](app-compression-corrupt-batch-status.md)
+(confirmed on origin/main). Both tests submit the same `not a zstd frame`
+payload with compressor ZSTD to BatchUpdateBlobs on the same pinned image,
+observe per-entry INTERNAL with a magic-number mismatch, and verify a valid
+identity sibling succeeds. Both exercise the same zstdDecompress/InternalErrorf
+path; there is no distinct defect here. This area retains its existing minimal
+reproducer and unverified status, without counting it as a new finding.
+
 Run with `GIT_CONFIG_GLOBAL=/dev/null bb remote test
 //tests/app/cas-batch:malformed_zstd_bug_test --test_tag_filters=bug
 --nocache_test_results --test_output=all` after setting the public fetch remote.

@@ -12,7 +12,7 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["gettree_test.go"],
+    srcs = ["gettree_test.go", "round2_test.go"],
     tags = ["local", "requires-network"],
     deps = DEPS,
 )

@@ -18,8 +18,11 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
+// Debian bookworm-slim linux/amd64 manifest, fetched from the public GCR mirror.
+const dockerActionImage = "mirror.gcr.io/library/debian@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91"
+
 var seed = flag.Int64("trees.seed", 314159, "Replay seed for randomized trees")
-var iterations = flag.Int("trees.iterations", 16, "Number of trees (each action bounded to 20s)")
+var iterations = flag.Int("trees.iterations", 16, "Number of trees (each action bounded to 40s)")
 
 type node struct {
 	name, target string
@@ -98,7 +101,8 @@ for p do
  printf "f\t%s\t%s:%s:%s\n" "$name" "$executable" "$hash" "$size"
  fi
 done' sh {} +) > manifest
-cp -a input output
+mkdir -p output
+cp -a input/. output/
 `
 
 func outputManifest(t *testing.T, ctx context.Context, c *harness.Clients, instance string, tree *repb.Tree) []string {
@@ -137,6 +141,9 @@ func outputManifest(t *testing.T, ctx context.Context, c *harness.Clients, insta
 			check(child.Name)
 			next := dirs[child.Digest.Hash]
 			require.NotNil(t, next, "missing output directory %s", child.Name)
+			_, digest, err := harness.MarshalDigest(next)
+			require.NoError(t, err)
+			require.True(t, proto.Equal(digest, child.Digest), "output child directory digest: %s", child.Name)
 			walk(next, path+"/"+child.Name, depth+1)
 		}
 	}
@@ -157,47 +164,64 @@ func TestRandomTreeRoundTrip(t *testing.T) {
 			defer cancel()
 			instance := "rand-trees"
 			n := generate(r, 1+r.Intn(3))
-			var want []string
-			expected(n, ".", &want)
-			sort.Strings(want)
-			input := upload(t, ctx, c, instance, n)
-			root, err := c.UploadProto(ctx, instance, &repb.Directory{Directories: []*repb.DirectoryNode{{Name: "input", Digest: input}}})
-			require.NoError(t, err)
-			cmd, err := c.UploadProto(ctx, instance, &repb.Command{Arguments: []string{"/bin/sh", "-c", script}, OutputPaths: []string{"manifest", "output"}, Platform: &repb.Platform{Properties: []*repb.Platform_Property{{Name: "OSFamily", Value: "linux"}, {Name: "Arch", Value: "amd64"}, {Name: "workload-isolation-type", Value: "none"}}}})
-			require.NoError(t, err)
-			action, err := c.UploadProto(ctx, instance, &repb.Action{CommandDigest: cmd, InputRootDigest: root, Timeout: durationpb.New(20 * time.Second), DoNotCache: true})
-			require.NoError(t, err)
-			stream, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: instance, ActionDigest: action, SkipCacheLookup: true, DigestFunction: repb.DigestFunction_SHA256})
-			require.NoError(t, err)
-			response := &repb.ExecuteResponse{}
-			for {
-				op, err := stream.Recv()
-				require.NoError(t, err)
-				if !op.Done {
-					continue
-				}
-				require.Nil(t, op.GetError())
-				require.NoError(t, op.GetResponse().UnmarshalTo(response))
-				break
-			}
-			require.Zero(t, response.GetStatus().GetCode(), "%v", response.GetStatus())
-			result := response.GetResult()
-			require.NotNil(t, result)
-			require.Zero(t, result.ExitCode, "%v", result)
-			require.Len(t, result.OutputFiles, 1)
-			require.Equal(t, "manifest", result.OutputFiles[0].Path)
-			manifest, err := c.Read(ctx, instance, result.OutputFiles[0].Digest)
-			require.NoError(t, err)
-			got := strings.Split(strings.TrimSuffix(string(manifest), "\n"), "\n")
-			sort.Strings(got)
-			require.Equal(t, want, got, "input materialization; seed=%d iteration=%d", *seed, i)
-			require.Len(t, result.OutputDirectories, 1)
-			require.Equal(t, "output", result.OutputDirectories[0].Path)
-			bytes, err := c.Read(ctx, instance, result.OutputDirectories[0].TreeDigest)
-			require.NoError(t, err)
-			tree := &repb.Tree{}
-			require.NoError(t, proto.Unmarshal(bytes, tree))
-			require.Equal(t, want, outputManifest(t, ctx, c, instance, tree), "output capture; seed=%d iteration=%d", *seed, i)
+			roundTrip(t, ctx, c, instance, n, "none", false, script, i)
 		})
 	}
+}
+
+func roundTrip(t *testing.T, ctx context.Context, c *harness.Clients, instance string, n *node, isolation string, legacy bool, actionScript string, sample int) *repb.ExecutedActionMetadata {
+	t.Helper()
+	var want []string
+	expected(n, ".", &want)
+	sort.Strings(want)
+	input := upload(t, ctx, c, instance, n)
+	root, err := c.UploadProto(ctx, instance, &repb.Directory{Directories: []*repb.DirectoryNode{{Name: "input", Digest: input}}})
+	require.NoError(t, err)
+	command := &repb.Command{Arguments: []string{"/bin/sh", "-c", actionScript}, OutputPaths: []string{"manifest", "output"}, Platform: &repb.Platform{Properties: []*repb.Platform_Property{{Name: "Arch", Value: "amd64"}, {Name: "OSFamily", Value: "linux"}}}}
+	if isolation == "docker" {
+		command.Platform.Properties = append(command.Platform.Properties, &repb.Platform_Property{Name: "container-image", Value: "docker://" + dockerActionImage})
+	}
+	command.Platform.Properties = append(command.Platform.Properties, &repb.Platform_Property{Name: "workload-isolation-type", Value: isolation})
+	if legacy {
+		command.OutputPaths = nil
+		command.OutputFiles = []string{"manifest"}
+		command.OutputDirectories = []string{"output"}
+	}
+	cmd, err := c.UploadProto(ctx, instance, command)
+	require.NoError(t, err)
+	action, err := c.UploadProto(ctx, instance, &repb.Action{CommandDigest: cmd, InputRootDigest: root, Timeout: durationpb.New(40 * time.Second), DoNotCache: true})
+	require.NoError(t, err)
+	stream, err := c.Execution.Execute(ctx, &repb.ExecuteRequest{InstanceName: instance, ActionDigest: action, SkipCacheLookup: true, DigestFunction: repb.DigestFunction_SHA256})
+	require.NoError(t, err)
+	response := &repb.ExecuteResponse{}
+	for {
+		op, err := stream.Recv()
+		require.NoError(t, err)
+		if !op.Done {
+			continue
+		}
+		require.Nil(t, op.GetError())
+		require.NoError(t, op.GetResponse().UnmarshalTo(response))
+		break
+	}
+	require.Zero(t, response.GetStatus().GetCode(), "%v", response.GetStatus())
+	result := response.GetResult()
+	require.NotNil(t, result)
+	require.Zero(t, result.ExitCode, "%v", result)
+	require.Len(t, result.OutputFiles, 1)
+	require.Equal(t, "manifest", result.OutputFiles[0].Path)
+	manifest, err := c.Read(ctx, instance, result.OutputFiles[0].Digest)
+	require.NoError(t, err)
+	got := strings.Split(strings.TrimSuffix(string(manifest), "\n"), "\n")
+	sort.Strings(got)
+	require.Equal(t, want, got, "input materialization; seed=%d iteration=%d", *seed, sample)
+	require.Len(t, result.OutputDirectories, 1)
+	require.Equal(t, "output", result.OutputDirectories[0].Path)
+	bytes, err := c.Read(ctx, instance, result.OutputDirectories[0].TreeDigest)
+	require.NoError(t, err)
+	require.True(t, proto.Equal(harness.Digest(bytes), result.OutputDirectories[0].TreeDigest), "output Tree blob digest")
+	tree := &repb.Tree{}
+	require.NoError(t, proto.Unmarshal(bytes, tree))
+	require.Equal(t, want, outputManifest(t, ctx, c, instance, tree), "output capture; seed=%d iteration=%d", *seed, sample)
+	return result.ExecutionMetadata
 }

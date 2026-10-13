@@ -6,6 +6,7 @@ Image version/digest: enterprise-v2.314.0; gcr.io/flame-public/buildbuddy-app-en
 Severity: low
 Severity justification: Protocol conformance failure on authenticated CAS reads; clients receive a successful compressed partial response for a request that must be rejected. No corruption, panic, or trust-boundary escape was observed.
 Status: unverified
+Duplicate of: [app-compression-read-limit.md](app-compression-read-limit.md) (confirmed). This finding is retained for its independent seeded randomized coverage.
 Repro test target: //tests/app/bytestream:compressed_limit_bug_test
 BuildBuddy invocation: https://app.buildbuddy.io/invocation/2f2d8981-ba45-42be-b816-d21c398d4fe0
 
