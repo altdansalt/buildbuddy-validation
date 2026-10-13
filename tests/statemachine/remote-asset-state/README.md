@@ -21,6 +21,15 @@ The test uses call-local protobuf wire encoding for BuildBuddy-specific API mess
 
 ## Documented proxy-local population
 
-`fetch_server.getByteStreamClient` selects the local ByteStream client on the proxy. The released `TestFetchBlob_CacheProxy` explicitly states that fetched assets must not propagate upstream, to reduce cross-zone egress. This is a documented semantic difference, not a confirmed defect: proxy-origin fetches are checked against proxy CAS, ByteStream, metadata and CLI, and app CAS is asserted missing. The app's streaming GetFile and full-file HTTP readers can read a proxy-addressed URI and are checked too. App metadata and GetFileRange read the app cache directly, so are only positive read surfaces for app-populated data. Cacheproxy has no native BuildBuddyService or api.v1 routes in this configuration.
+`fetch_server.getByteStreamClient` selects the local ByteStream client on the proxy. The released `TestFetchBlob_CacheProxy` explicitly states that fetched assets must not propagate upstream, to reduce cross-zone egress. This is a documented semantic difference, not a confirmed defect: proxy-origin fetches are checked against proxy CAS, ByteStream, metadata and CLI, and app CAS is asserted missing. The app's streaming GetFile and full-file HTTP readers can read a proxy-addressed URI and are checked too. Default proxy FindMissingBlobs queries the authoritative upstream cache and therefore reports these proxy-only assets missing. The supported `proxy_skip_remote=true` header is checked separately and must report the local asset present. Both results are asserted alongside successful proxy ByteStream and BatchReadBlobs reads. App metadata and GetFileRange read the app cache directly, so are only positive read surfaces for app-populated data. Cacheproxy has no native BuildBuddyService or api.v1 routes in this configuration.
 
 No Remote Asset delete/update-association RPC is implemented. Origin changes plus freshness-constrained fetches exercise supported updates, and the old digest remains readable locally. FetchDirectory and both Push RPCs are intentionally excluded as requested.
+
+## Validation
+
+`bb remote test //tests/statemachine/remote-asset-state:go_default_test --test_output=errors` passed (one test target executed, 28.9 seconds) on the pinned release images:
+
+- [Bazel test invocation](https://app.buildbuddy.io/invocation/04cbced3-3ebf-45aa-883d-06f9b6dce22a)
+- [Remote runner invocation](https://app.buildbuddy.io/invocation/ffbc913b-1b14-4391-8dfc-d6581cd69b5a)
+
+Earlier development runs exposed fixture DNS/web-origin mistakes and an incorrect assumption about upstream-authoritative FindMissingBlobs. These were corrected; no product defect is claimed.
