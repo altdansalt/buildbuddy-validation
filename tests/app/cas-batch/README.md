@@ -52,3 +52,35 @@ Round 2 validation on 2026-10-13:
 - [Malformed-zstd minimal repro, run 1](https://app.buildbuddy.io/invocation/96cc87f3-6cca-46f5-9156-aa56a81b56f1)
   and [run 2](https://app.buildbuddy.io/invocation/fbe4e3da-10b5-4505-9324-c0a0e58628e1),
   both uncached and failing only the invalid-item status assertion.
+
+Round 3 adds BatchRead item independence and FindMissing agreement (seed
+`2026101303`, 24 rounds of 12 unique digests). Every round includes missing,
+identity-uploaded and zstd-uploaded blobs, with random additional kinds, sizes,
+contents and request order. Both identity-only and zstd-accepting reads compare
+singleton statuses and decoded payloads against the mixed batch. FindMissing
+must return exactly the digests with NOT_FOUND read statuses, without duplicates.
+
+Each round also mixes a randomly selected stored oversized blob or oversized
+missing digest into the set. The release rejects oversized singleton and mixed
+BatchRead RPCs with INVALID_ARGUMENT, even when zstd is accepted: its budget uses
+declared uncompressed sizes. This request-level budget rejection is separate
+from item independence below the limit. FindMissing still matches known storage
+state for the full set; ByteStream verifies the oversized stored blob and valid
+siblings after rejected reads. BatchRead cannot supply a per-item existence
+oracle for requests rejected by the size limit.
+
+The malformed-zstd finding is a duplicate of the confirmed
+`findings/app-compression-corrupt-batch-status.md` on main: same payload, pinned
+image, decoder error and status classification. Its finding now records that
+relationship; no new defect is claimed.
+
+Round 3 validation on 2026-10-13:
+
+- [Passing full nobug suite](https://app.buildbuddy.io/invocation/d9d3b12b-f546-4c72-8840-5d3bdf2c3d71)
+  from `GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/app/cas-batch/...
+  --config=nobug --test_arg=-test.v`: 1/1 test targets passed, executed uncached.
+- [Remote runner invocation](https://app.buildbuddy.io/invocation/491fa579-c95b-4372-ba48-7304d2912c5b).
+
+No new suspicious behavior was observed. The existing malformed-zstd duplicate
+already has two uncached minimal reproduction links in its finding; round 3
+compares those observations with the independently confirmed compression report.
