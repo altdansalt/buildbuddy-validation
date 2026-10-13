@@ -1,10 +1,41 @@
 load("@rules_go//go:def.bzl", "go_test")
 go_test(
     name = "go_default_test",
+    args = ["-test.v"],
     size = "large",
     timeout = "long",
     srcs = ["sso_test.go"],
     tags = ["local", "requires-network"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+    ],
+)
+
+go_test(
+    name = "immediate_consistency_repro",
+    size = "large",
+    timeout = "long",
+    srcs = ["sso_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    args = ["-test.v", "-sso_immediate"],
+    deps = [
+        "//harness:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+    ],
+)
+
+go_test(
+    name = "replacement_consistency_repro",
+    size = "large",
+    timeout = "long",
+    srcs = ["sso_test.go"],
+    tags = ["bug", "local", "requires-network"],
+    args = ["-test.v", "-sso_immediate", "-sso_replace"],
     deps = [
         "//harness:go_default_library",
         "@com_github_stretchr_testify//require:go_default_library",
