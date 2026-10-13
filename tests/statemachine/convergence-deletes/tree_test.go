@@ -83,10 +83,10 @@ func TestDeletedTreeChild(t *testing.T) {
 					require.Equal(t, 5, n)
 					stale = append(stale, containsDeleted)
 				}
-				if time.Since(started) >= 5*time.Second {
+				if time.Since(started) >= 30*time.Second {
 					break
 				}
-				time.Sleep(250 * time.Millisecond)
+				time.Sleep(500 * time.Millisecond)
 			}
 			t.Logf("deleted child still exposed after %s app=%v proxy=%v", time.Since(started), stale[0], stale[1])
 			// The frontend's streaming service adapter delegates to the same CAS server.

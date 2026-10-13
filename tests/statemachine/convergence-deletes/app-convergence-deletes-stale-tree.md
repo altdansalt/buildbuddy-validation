@@ -45,3 +45,7 @@ The target is tagged `bug` and intentionally fails the desired invariant. Defaul
 ## Round 2 reruns
 
 Two further invocations (each two fresh fixtures) reproduced it: https://app.buildbuddy.io/invocation/3396e2b7-20b1-42da-a05c-1e9a3a34c24f and https://app.buildbuddy.io/invocation/700102bc-086b-415b-96f6-085f03ef6e5b (stale for the whole 5s window each time; not shown to be permanent). Depends on non-default `--cache.tree_cache_write_probability=1` (default 0.01).
+
+## Round 2 duration extension
+
+The poll window was extended to 30s (500ms polling). Invocation https://app.buildbuddy.io/invocation/a52b9d67-0d20-419a-8df0-74ed749678c8 (two fresh fixtures) observed the deleted child still exposed by app/proxy REAPI GetTree and frontend GetTree for the full ~30.2s, so no convergence within 30s. Source review: tree-cache entries are ordinary cache blobs with no TTL (`server/remote_cache/content_addressable_storage_server`), so they should persist until eviction, i.e. likely long-lived in practice, but the test only demonstrates >=30s. Same non-default dependence as above (write probability 1; default 0.01).
