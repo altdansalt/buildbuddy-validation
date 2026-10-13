@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -31,12 +32,21 @@ type tree struct {
 
 func digest(b []byte, fn repb.DigestFunction_Value) *repb.Digest {
 	var h []byte
-	if fn == repb.DigestFunction_SHA1 {
+	switch fn {
+	case repb.DigestFunction_SHA384:
+		s := sha512.Sum384(b)
+		h = s[:]
+	case repb.DigestFunction_SHA512:
+		s := sha512.Sum512(b)
+		h = s[:]
+	case repb.DigestFunction_SHA1:
 		s := sha1.Sum(b)
 		h = s[:]
-	} else {
+	case repb.DigestFunction_SHA256:
 		s := sha256.Sum256(b)
 		h = s[:]
+	default:
+		panic(fmt.Sprintf("unsupported digest function %s", fn))
 	}
 	return &repb.Digest{Hash: hex.EncodeToString(h), SizeBytes: int64(len(b))}
 }
@@ -58,6 +68,8 @@ func newTree(fn repb.DigestFunction_Value) *tree {
 func generate(t *testing.T, r *rand.Rand, n int, fn repb.DigestFunction_Value) *tree {
 	tr := newTree(fn)
 	var nodes []*repb.Digest
+	var shareable []*repb.Digest
+	var expanded []int
 	for i := 0; i < n; i++ {
 		payload := []byte(fmt.Sprintf("payload-%d", i))
 		tr.blobs[key(digest(payload, fn))] = payload
@@ -69,14 +81,25 @@ func generate(t *testing.T, r *rand.Rand, n int, fn repb.DigestFunction_Value) *
 				count = 128
 			}
 		}
+		cost := 1
 		for j := 0; j < count; j++ {
-			child := nodes[0]
+			// Bound expanded paths as well as unique nodes: GetTree may emit
+			// duplicate directories, so unconstrained DAG edges grow exponentially.
+			child := shareable[r.Intn(len(shareable))]
+			childCost := 8
 			if j == 0 {
 				child = nodes[len(nodes)-1]
+				childCost = expanded[len(expanded)-1]
 			}
+			cost += childCost
 			d.Directories = append(d.Directories, &repb.DirectoryNode{Name: fmt.Sprintf("child-%04d", j), Digest: child})
 		}
-		nodes = append(nodes, tr.add(t, d))
+		dg := tr.add(t, d)
+		nodes = append(nodes, dg)
+		expanded = append(expanded, cost)
+		if cost <= 8 {
+			shareable = append(shareable, dg)
+		}
 	}
 	tr.root = nodes[len(nodes)-1]
 	// Reference model follows only available directory edges from the root.
@@ -102,22 +125,28 @@ func generate(t *testing.T, r *rand.Rand, n int, fn repb.DigestFunction_Value) *
 }
 func upload(t *testing.T, ctx context.Context, c *harness.Clients, tr *tree, instance string) {
 	t.Helper()
+	if err := uploadBlobs(ctx, c, tr, instance); err != nil {
+		t.Fatal(err)
+	}
+}
+func uploadBlobs(ctx context.Context, c *harness.Clients, tr *tree, instance string) error {
 	req := &repb.BatchUpdateBlobsRequest{InstanceName: instance, DigestFunction: tr.fn}
 	for _, b := range tr.blobs {
 		req.Requests = append(req.Requests, &repb.BatchUpdateBlobsRequest_Request{Digest: digest(b, tr.fn), Data: b})
 	}
 	res, err := c.CAS.BatchUpdateBlobs(ctx, req)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	if len(res.Responses) != len(req.Requests) {
-		t.Fatal("upload response count")
+		return fmt.Errorf("upload response count: got %d want %d", len(res.Responses), len(req.Requests))
 	}
 	for _, r := range res.Responses {
 		if r.GetStatus().GetCode() != 0 {
-			t.Fatalf("upload: %v", r)
+			return fmt.Errorf("upload: %v", r)
 		}
 	}
+	return nil
 }
 func read(t *testing.T, ctx context.Context, c *harness.Clients, req *repb.GetTreeRequest) ([]*repb.GetTreeResponse, error) {
 	t.Helper()
@@ -162,7 +191,7 @@ func TestSeededTrees(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	app, proxy := f.Clients(harness.App), f.Clients(harness.CacheProxy)
-	for _, fn := range []repb.DigestFunction_Value{repb.DigestFunction_SHA256, repb.DigestFunction_SHA1} {
+	for _, fn := range []repb.DigestFunction_Value{repb.DigestFunction_SHA256, repb.DigestFunction_SHA1, repb.DigestFunction_SHA384, repb.DigestFunction_SHA512} {
 		r := rand.New(rand.NewSource(*seed))
 		for i := 0; i < *iterations; i++ {
 			t.Run(fmt.Sprintf("seed=%d/%s/%d", *seed, fn, i), func(t *testing.T) {
@@ -178,7 +207,9 @@ func TestSeededTrees(t *testing.T) {
 						req := &repb.GetTreeRequest{InstanceName: instance, RootDigest: tr.root, DigestFunction: fn}
 						if repeat == 1 {
 							req.PageSize = 10000
-							req.DigestFunction = repb.DigestFunction_UNKNOWN
+							if fn == repb.DigestFunction_SHA256 || fn == repb.DigestFunction_SHA1 {
+								req.DigestFunction = repb.DigestFunction_UNKNOWN
+							}
 						}
 						p, err := read(t, ctx, c, req)
 						if err != nil {
