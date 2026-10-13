@@ -6,6 +6,7 @@ Image version/digest: enterprise-v2.314.0; app gcr.io/flame-public/buildbuddy-ap
 Severity: low
 Severity justification: Protocol conformance and integrity-validation failure for clients supplying a nonzero compressed read limit. The server returns a successful truncated blob under the full blob's resource name. Conforming clients use zero limits and verify digests; no stored-content corruption or authorization bypass was observed.
 Status: unverified
+Duplicate of: [app-compression-read-limit.md](app-compression-read-limit.md) (confirmed app finding; this crosscutting repro also exercises the proxy).
 Repro test target: //tests/crosscutting/rand-cas:compressed_read_limit_bug_test
 BuildBuddy invocation: https://app.buildbuddy.io/invocation/ba00f540-b039-4ebb-9281-b529ba0634c7
 
