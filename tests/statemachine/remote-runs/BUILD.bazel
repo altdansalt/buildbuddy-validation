@@ -1,0 +1,30 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+RUN_DEPS = [
+    "//harness",
+    "@com_github_bazelbuild_remote_apis//build/bazel/remote/execution/v2:go_default_library",
+    "@com_github_stretchr_testify//require:go_default_library",
+    "@org_golang_google_grpc//:go_default_library",
+    "@org_golang_google_genproto_googleapis_bytestream//:go_default_library",
+    "@org_golang_google_protobuf//encoding/protowire:go_default_library",
+    "@org_golang_google_protobuf//proto:go_default_library",
+]
+
+go_test(
+    name = "go_default_test",
+    srcs = ["runs_test.go"],
+    size = "large",
+    timeout = "long",
+    tags = ["local", "requires-network"],
+    deps = RUN_DEPS,
+)
+
+go_test(
+    name = "live_cli_repro",
+    srcs = ["runs_test.go"],
+    size = "large",
+    timeout = "long",
+    args = ["-remote-runs.check-live-cli"],
+    tags = ["bug", "local", "requires-network"],
+    deps = RUN_DEPS,
+)
