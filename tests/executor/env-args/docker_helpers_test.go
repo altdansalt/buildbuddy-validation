@@ -77,16 +77,13 @@ func dockerFixture(t *testing.T) *harness.Fixture {
 	})
 	root := filepath.Join(dir, "workspace")
 	require.NoError(t, os.MkdirAll(root, 0777))
-	extra := filepath.Join(dir, "extra")
-	require.NoError(t, os.MkdirAll(extra, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(extra, "marker"), []byte("read-only mount\n"), 0644))
 	return harness.Start(t, harness.Options{
 		Components: []harness.Component{harness.App, harness.Executor},
 		Config: map[harness.Component]harness.Config{harness.Executor: {"executor": harness.Config{
 			"docker_socket": "/var/run/docker.sock", "root_directory": filepath.Join(root, "remotebuilds"),
 			"host_root_directory": root, "local_cache_directory": filepath.Join(root, "filecache"),
 			"default_isolation_type": "docker", "default_image": "alpine:3.21.3",
-			"docker_network": "action-network", "docker_volumes": []string{extra + ":/conformance-extra:ro"},
+			"docker_network": "action-network",
 		}}},
 		DockerArgs: map[harness.Component][]string{harness.Executor: {"--volume", socket + ":/var/run/docker.sock", "--volume", root + ":" + root, "--env", "DOCKER_HOST=unix:///var/run/docker.sock"}},
 	})

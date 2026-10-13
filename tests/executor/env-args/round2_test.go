@@ -57,6 +57,9 @@ func TestRound2(t *testing.T) {
 						for j := 0; j < 1+rng.Intn(12); j++ {
 							name := fmt.Sprintf("EA_%02d", j)
 							v := value()
+							if j == 0 {
+								v = ""
+							}
 							env = append(env, &repb.Command_EnvironmentVariable{Name: name, Value: v})
 							script += fmt.Sprintf(`; printf '%%s\000' "$%s"`, name)
 							expected += v + "\x00"
