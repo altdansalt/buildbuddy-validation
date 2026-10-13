@@ -39,13 +39,16 @@ use the requested function. A small single-chunk BLAKE3 implementation is checke
 against independent empty, `abc`, and multi-block vectors; no dependency changes
 are required.
 
-The split/splice property uses seeded random data up to 2 MiB. It uploads separate
+The split/splice property uses seeded random data between 2 and 3 MiB. It uploads separate
 chunks, splices a previously absent blob, checks ByteStream reconstruction, and
 checks the resulting split mapping. Ordinary uploads may legitimately have no
 mapping and return NOT_FOUND. Replay using
 `--test_arg=-capabilities_seed=31402`. Unsupported compressor choices must return
 INVALID_ARGUMENT or UNIMPLEMENTED. Identity and UNKNOWN digest inference are
 protocol defaults, not negative cases.
+
+`small_splice_bug_test` checks that a six-byte blob becomes readable after a
+successful splice. Large blob reconstruction remains passing coverage.
 
 `unknown_digest_bug_test` isolates acceptance of an unknown digest function by
 FindMissingBlobs. Run explicitly with `--test_tag_filters=bug
