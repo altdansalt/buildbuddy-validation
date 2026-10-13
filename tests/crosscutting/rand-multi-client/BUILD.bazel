@@ -4,7 +4,7 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["multi_test.go"],
+    srcs = ["multi_test.go", "mixed_test.go"],
     tags = ["local", "requires-network"],
     deps = [
         "//harness:go_default_library",

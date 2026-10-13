@@ -44,3 +44,43 @@ Validation on hosted runners:
 
 No property violations were observed in these runs; no bug-tagged repro or finding
 is included.
+
+## Round 2: mixed versions and cancellation
+
+`TestMixedVersionsCancellation` downloads checksum-verified Bazel **7.6.1, 8.4.2,
+and 9.0.0** and runs six clients against one disposable app/executor/proxy fixture.
+Each version has one direct-cache client and one proxy-cache client; every client
+uses remote execution through the local app, with local fallback disabled. The
+proxy does not implement the Execution service. A dependency-free Starlark rule
+keeps the generated workload compatible across all three major versions.
+
+The seed determines a 6–10-node chain/diamond DAG, additional edges, binary inputs,
+the victim's cache route, and cancellation delay. Each round uses fresh inputs and
+fresh output bases. An independent Go oracle computes every payload output; a
+separate hostname output proves that results came from the fixture executor,
+including results subsequently served from the action cache. Execution logs must
+record every action as a successful remote spawn.
+
+The victim starts first. Its first remote action writes a marker to a test-owned
+bind mount and sleeps for 20 seconds. After observing that marker, the test starts
+the other five clients, waits a seeded 500–1999 ms, and sends SIGINT to the victim
+Bazel process. This exercises graceful client/RPC cancellation during remote work;
+a 15-second shutdown limit bounds the client process. The marker is an observation
+hook, not an output or cache oracle. All survivors must finish with correct bytes,
+then the cancelled client retries with a clean output base and must also match.
+The first three rounds cancel one client from each Bazel major version. Actual
+process and server scheduling remains nondeterministic.
+
+Client stdout/stderr is preserved per round/client/phase alongside the harness
+configs, exact image metadata, and component logs in undeclared test outputs.
+Use the same seed/iteration flags above to replay both tests. To run only the new
+coverage, append `--test_filter=TestMixedVersionsCancellation`.
+
+Round 2 hosted validation on the default digest-pinned enterprise-v2.314.0 images:
+
+- [Focused mixed-version cancellation, default seed](https://app.buildbuddy.io/invocation/ef294316-72b4-4693-9c1b-ba4e86f4f25e): passed in 142 seconds.
+- [Full area suite, default seed, final cleanup ordering](https://app.buildbuddy.io/invocation/7a9929f6-1758-4d04-b1b4-8cbb5b2ad76e): passed in 267 seconds. Both the existing concurrent-client regression and mixed-version cancellation coverage passed.
+- [Mixed-version seed 271828, six rounds](https://app.buildbuddy.io/invocation/d5c52e03-e0fe-4845-9696-ba7891167b1b): passed in 261 seconds. Cancelled each of the six version/cache-route combinations; all survivors and clean retries matched the oracle.
+
+No product property violation was observed. No bug-tagged repro, finding, or
+shared harness/dependency change is needed.
