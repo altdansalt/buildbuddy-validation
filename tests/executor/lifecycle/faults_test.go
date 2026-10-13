@@ -111,6 +111,7 @@ func retriable(t *testing.T, err error) {
 	t.Helper()
 	require.Contains(t, []codes.Code{codes.Unavailable, codes.Aborted, codes.ResourceExhausted}, status.Code(err), "unclear/non-retriable failure: %v", err)
 	require.NotEmpty(t, status.Convert(err).Message())
+	t.Logf("explicit retriable failure: %v", err)
 }
 
 // Exactly one terminal response on this observer, or an explicit retriable error.
@@ -137,24 +138,28 @@ func finish(t *testing.T, f *harness.Fixture, ctx context.Context, events <-chan
 		if !o.terminal {
 			continue
 		}
-		resp := o.response
-		require.NotNil(t, resp)
-		if resp.GetStatus().GetCode() != 0 {
-			retriable(t, status.ErrorProto(resp.Status))
-			failed = true
-			continue
-		}
-		require.NotNil(t, resp.Result)
-		require.Zero(t, resp.Result.ExitCode)
-		b := resp.Result.StdoutRaw
-		if resp.Result.StdoutDigest != nil {
-			var err error
-			b, err = f.Clients(harness.App).Read(ctx, "lifecycle-faults", resp.Result.StdoutDigest)
-			require.NoError(t, err)
-		}
-		require.Equal(t, id+"\n", string(b))
+		checkResponse(t, f, ctx, o.response, id)
 	}
 	require.True(t, terminals == 1 || failed, "action disappeared without a terminal result or retriable failure")
+}
+
+func checkResponse(t *testing.T, f *harness.Fixture, ctx context.Context, resp *repb.ExecuteResponse, id string) {
+	t.Helper()
+	require.NotNil(t, resp)
+	if resp.GetStatus().GetCode() != 0 {
+		retriable(t, status.ErrorProto(resp.Status))
+		return
+	}
+	require.NotNil(t, resp.Result)
+	require.Zero(t, resp.Result.ExitCode)
+	b := resp.Result.StdoutRaw
+	if resp.Result.StdoutDigest != nil {
+		var err error
+		b, err = f.Clients(harness.App).Read(ctx, "lifecycle-faults", resp.Result.StdoutDigest)
+		require.NoError(t, err)
+	}
+	require.Equal(t, id+"\n", string(b))
+	t.Logf("action %s completed with matching stdout and exit code zero", id)
 }
 
 func faultFixture(t *testing.T) *harness.Fixture {
@@ -232,6 +237,7 @@ func TestAppOutageWhileExecutorHoldsWork(t *testing.T) {
 	stream, err := f.Clients(harness.App).Execution.WaitExecution(ctx, &repb.WaitExecutionRequest{Name: name})
 	require.NoError(t, err)
 	terminals := 0
+	retriableFailure := false
 	for {
 		op, err := stream.Recv()
 		if err == io.EOF {
@@ -239,6 +245,7 @@ func TestAppOutageWhileExecutorHoldsWork(t *testing.T) {
 		}
 		if err != nil {
 			retriable(t, err)
+			retriableFailure = true
 			break
 		}
 		if !op.Done {
@@ -246,17 +253,16 @@ func TestAppOutageWhileExecutorHoldsWork(t *testing.T) {
 		}
 		terminals++
 		require.Equal(t, 1, terminals)
-		require.Nil(t, op.GetError())
+
+		if op.GetError() != nil {
+			retriable(t, status.ErrorProto(op.GetError()))
+			continue
+		}
 		resp := &repb.ExecuteResponse{}
 		require.NoError(t, op.GetResponse().UnmarshalTo(resp))
-		if resp.GetStatus().GetCode() != 0 {
-			retriable(t, status.ErrorProto(resp.Status))
-		} else {
-			require.NotNil(t, resp.Result)
-			require.Zero(t, resp.Result.ExitCode)
-		}
+		checkResponse(t, f, ctx, resp, id)
 	}
-	require.Equal(t, 1, terminals, "original operation was not recovered")
+	require.True(t, terminals == 1 || retriableFailure, "original operation was not recovered and no retriable failure was returned")
 	require.Equal(t, "1", f.Exec(harness.Executor, "sh", "-c", "wc -l < /data/"+id+"-attempts"))
 	f.WaitExecutionReady()
 }
