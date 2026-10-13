@@ -3,7 +3,7 @@
 The tests use the previous non-prerelease GitHub release, **v2.313.0**, followed
 by the scaffold's pinned **v2.314.0**. The previous release was identified from
 https://api.github.com/repos/buildbuddy-io/buildbuddy/releases on 2026-10-12.
-Its linux/amd64 GCR manifest digests are constants in `upgrade_test.go`.
+Its linux/amd64 GCR manifest digests are constants in `transition_test.go`.
 Both current images are explicitly selected from `harness.PinnedImages` so
 ambient image overrides cannot silently change the version pair.
 
@@ -38,8 +38,7 @@ private daemons created by the harness. A future harness restart/volume-sharing
 API could replace this helper. Tests are sequential to keep resource usage low.
 
 Limitations: single-node SQLite/disk/Pebble only; no MySQL/Postgres, distributed
-cache, in-flight scheduler-state migration, downgrade, proxy persistence, or
-multi-release upgrade chain. The version-skew matrix covers the baseline bare
+cache, multi-release upgrade chain. The version-skew matrix covers the baseline bare
 runner, not container or VM isolation providers.
 
 Validation: [green Bazel invocation](https://app.buildbuddy.io/invocation/acca31b8-3a51-4a09-9359-cf5d78fde355)
@@ -47,5 +46,55 @@ Validation: [green Bazel invocation](https://app.buildbuddy.io/invocation/acca31
 using plain `bb remote test //tests/crosscutting/upgrade-compat/... --config=nobug`.
 All upgrade and skew cases passed; no product findings were identified.
 Invocation comparisons exclude the asynchronously updated DB timestamp and
-normalize an absent versus empty response-enriched scorecard; stored events and
+normalize an absent versus empty response-enriched scorecard and sort the
+set-valued capability list; stored events and
 all remaining returned metadata must match.
+
+## Round 2
+
+`TestStorageDowngrade` runs the same SQLite/API-key, invocation, CAS and AC
+continuity checks from v2.314.0 back to v2.313.0, including a write after
+downgrade. This covers data written by the current release, not merely an
+untouched old volume.
+
+`TestProxyPersistenceUpgrade` warms twelve binary CAS payloads through the
+v2.313.0 proxy and replaces it with v2.314.0 using the same `/data` volume.
+Payload bytes, sizes and read order use replayable seed `2026101202`. The new
+proxy's cache backend points to its own closed loopback port while its
+authenticator still points to the fixture-local app. Every warmed blob must
+remain readable; a never-warmed remote-only blob must fail. The old proxy
+linux/amd64 manifest digest is recorded in `round2_test.go` (resolved from GCR
+on 2026-10-12).
+
+`TestQueuedWorkUpgrade` retains Redis, SQLite, cache, app ports and the current
+executor while upgrading the app from v2.313.0 to v2.314.0. A live executor has
+one custom resource slot: a gated running shell action holds it while a second
+action remains QUEUED. The queued task is checked in fixture-local Redis before
+replacement, then resumed by its original operation name. No Execute is
+resubmitted. The test checks queued recovery independently of the running
+failure below; it does not require the running action to succeed.
+
+The `scheduler_shutdown_bug_test` target holds one running action through
+v2.313.0 -> v2.314.0 app replacement and through current-release app replacement.
+Both cases repeatedly return a terminal Unavailable result after shutdown.
+See [the unverified finding](../../../findings/app-upgrade-compat-running-task-shutdown.md).
+The target is tagged `bug` and excluded from `--config=nobug`.
+
+These tests cover process replacement with retained Redis; they do not test
+Redis loss, distributed schedulers or exactly-once execution.
+
+The area-local replacement helper pulls the image before downtime, mounts the
+saved fixture config, retains its hostname alias, gracefully stops the component
+and mounts its existing data. Scheduler checks wait for executor readiness after
+replacement before reading the retained operation.
+Replacement logs and inspect metadata are preserved with fixture artifacts.
+
+Round 2 validation: the full area suite passed with default Docker in
+[Bazel invocation 43f7ec14](https://app.buildbuddy.io/invocation/43f7ec14-648c-4598-a225-0e209c1670ed)
+([remote run](https://app.buildbuddy.io/invocation/639bf174-e3f5-4cc0-913c-fe5e68b6e2a0)).
+The final fixture, including executor readiness after app replacement, passed in
+[Bazel invocation c9000be7](https://app.buildbuddy.io/invocation/c9000be7-a37f-44b1-b84a-658cb9b7e55c)
+([remote run](https://app.buildbuddy.io/invocation/c668c341-c211-4380-b812-3757a43b2330))
+with `--runner_exec_properties=init-dockerd=true`. One later default-daemon run
+hit Docker Hub's Redis pull rate limit; prestarted Docker reuses cached images.
+This infrastructure failure is excluded from product findings.
