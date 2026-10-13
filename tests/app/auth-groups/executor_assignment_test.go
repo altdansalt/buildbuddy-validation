@@ -13,7 +13,9 @@ import (
 )
 
 func TestAuthorizedExecutorBelongsToKeyGroup(t *testing.T) {
-	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}, Config: map[harness.Component]harness.Config{harness.App: {"remote_execution": harness.Config{"require_executor_authorization": true}}}})
+	f := harness.Start(t, harness.Options{Components: []harness.Component{harness.App}, Config: map[harness.Component]harness.Config{harness.App: {"remote_execution": harness.Config{"require_executor_authorization": true, "enable_user_owned_executors": true}}}})
+	// Authorization checks keys; user-owned pools additionally partition executor
+	// registration by group instead of using the default shared pool.
 	// The fallback harness creates one daemon per fixture. Reuse only the
 	// daemon containing our app so the executor can join its private network.
 	candidates := []string{os.Getenv("DOCKER_HOST")}

@@ -27,5 +27,8 @@ not a PermissionDenied response. These choices follow the released source:
 
 Executor assignment uses a second executor-only fixture joined to the app's
 private network and passes a disposable REGISTER_EXECUTOR key, with
-`remote_execution.require_executor_authorization: true` on the app. No shared
+`remote_execution.require_executor_authorization: true` and
+`remote_execution.enable_user_owned_executors: true` on the app. Authorization
+alone leaves the default shared executor pool enabled; user-owned pools are
+required for group-specific registration. No shared
 endpoint or host dispatch credential is used.
