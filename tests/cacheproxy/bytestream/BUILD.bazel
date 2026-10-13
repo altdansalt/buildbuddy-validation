@@ -4,7 +4,7 @@ go_test(
     name = "go_default_test",
     size = "large",
     timeout = "long",
-    srcs = ["bytestream_test.go"],
+    srcs = ["bytestream_test.go", "property_test.go"],
     tags = ["local", "requires-network"],
     deps = [
         "//harness:go_default_library",

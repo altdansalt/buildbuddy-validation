@@ -29,3 +29,18 @@ that partial bytes were committed. Cancellation assertions apply to the client
 stream; full readback verifies subsequent requests and stored data remain sound.
 EOF beyond the resource size is tested separately against the normative
 OUT_OF_RANGE requirement.
+
+Round 2 adds `TestSeededProxyAppEquivalence`: 24 replayable random blobs with
+random upload chunkings (including empty initial messages), offsets, and limits.
+It compares response status codes and accumulated bytes against the direct app,
+checks valid reads against the original bytes, and exercises app-only blobs before
+and after warming the proxy. Negative ranges and missing blobs are also compared.
+Known beyond-EOF defects stay in the separate bug target; completed-write status
+is likewise tracked separately. The findings link the equivalent app reports on
+PR #37 and remain unverified pending triage.
+
+The default seed is 20261012; replay or explore another seed with:
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null bb remote test //tests/cacheproxy/bytestream:go_default_test --config=nobug --test_arg=-test.run=TestSeededProxyAppEquivalence --test_arg=-bytestream.seed=20261012 --nocache_test_results
+```
