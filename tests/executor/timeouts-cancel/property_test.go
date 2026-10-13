@@ -75,7 +75,7 @@ func treeScript(rng *rand.Rand, token string) (string, int) {
 		fmt.Fprintf(&b, "while :; do printf 'node%d\\n' >> partial.txt; sleep 0.1; done", i)
 		return b.String()
 	}
-	return "export BBVAL_TREE=" + token + "; printf started; " + node(0) + "; printf completed", nodes
+	return "export BBVAL_TREE=" + token + "; exec /bin/sh -c " + shellQuote("printf started; "+node(0)+"; printf completed"), nodes
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
@@ -93,7 +93,7 @@ func TestSeededProcessTreeTermination(t *testing.T) {
 			ctx, stop := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer stop()
 			c := f.Clients(harness.App)
-			warm := execute(t, ctx, c, upload(t, ctx, c, "command -v setsid; printf ready", 30*time.Second, props...))
+			warm := execute(t, ctx, c, upload(t, ctx, c, "command -v setsid && printf ready", 30*time.Second, props...))
 			require.Zero(t, warm.GetStatus().GetCode())
 			require.Zero(t, warm.GetResult().GetExitCode())
 			rng := rand.New(rand.NewSource(*treeSeed))
@@ -156,6 +156,9 @@ func TestSeededProcessTreeTermination(t *testing.T) {
 						require.NoError(t, err)
 						require.NotEmpty(t, b)
 						require.NotContains(t, string(b), "completed")
+						for node := 0; node < nodes; node++ {
+							require.Contains(t, string(b), fmt.Sprintf("node%d\n", node), "generated node must have started writing")
+						}
 					}
 					if !cancelAction {
 						require.Contains(t, stdout(t, ctx, c, r), "started")
